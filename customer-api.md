@@ -13,6 +13,49 @@ Authorization: Bearer {token}
 
 ---
 
+## 0. Health & Diagnostics (Public)
+
+### 0.1 Ping
+
+**GET** `/api/customer/ping`
+
+Simple reachability check.
+
+**Response (200):**
+```json
+{
+  "message": "pong"
+}
+```
+
+---
+
+### 0.2 Health Check
+
+**GET** `/api/customer/health`
+
+Returns API and database status.
+
+**Response (200):**
+```json
+{
+  "status": "healthy",
+  "database": true,
+  "timestamp": "2026-04-18T12:00:00+00:00"
+}
+```
+
+**Response (503) — degraded:**
+```json
+{
+  "status": "degraded",
+  "database": false,
+  "timestamp": "2026-04-18T12:00:00+00:00"
+}
+```
+
+---
+
 ## 1. Authentication
 
 ### 1.1 Register (Email/Password)
