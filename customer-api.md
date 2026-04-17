@@ -294,45 +294,142 @@ Returns profile info, recent restaurants, and loyalty overview.
 
 ## 3. Restaurant Browsing (Public)
 
-### 3.1 List Restaurants
+### 3.1 List Categories
+
+**GET** `/api/customer/categories`
+
+Returns all active menu categories across discoverable restaurants (deduplicated by name).
+
+**Response (200):**
+```json
+[
+  { "id": 1, "name": "Burger", "slug": "burger" },
+  { "id": 2, "name": "Pizza", "slug": "pizza" },
+  { "id": 3, "name": "Starters", "slug": "starters" }
+]
+```
+
+**Notes:**
+- Only categories from restaurants with `is_live_and_discoverable = true` are included.
+- Categories are deduplicated by name and sorted alphabetically.
+- Use the `id` value as the `cuisine` filter param in List Restaurants.
+
+---
+
+### 3.2 List Restaurants
 
 **GET** `/api/customer/restaurants`
 
 **Query Parameters:**
 | Param | Type | Description |
 |-------|------|-------------|
+| `search` | string | Search by restaurant name or city |
 | `city` | string | Filter by city |
-| `search` | string | Search by name or city |
+| `cuisine` | int | Filter by menu category ID |
+| `price_range` | int | Price bracket: `1` = €0–10, `2` = €10–25, `3` = €25–50, `4` = €50+ |
+| `service_type` | string | `dine_in`, `takeaway`, or `reservation` |
+| `rating` | float | Minimum average rating (e.g. `4`) |
+| `distance` | float | Max distance in km (requires `latitude` and `longitude`) |
+| `latitude` | float | Customer's current latitude |
+| `longitude` | float | Customer's current longitude |
+| `sort_by` | string | `name` (default), `distance` (requires `latitude`/`longitude`), `rating` |
 | `per_page` | int | Items per page (default: 20) |
 | `page` | int | Page number |
-
-**Response (200):** Paginated list of discoverable restaurants with settings.
-
----
-
-### 3.2 Show Restaurant
-
-**GET** `/api/customer/restaurants/{vendorPublicId}`
 
 **Response (200):**
 ```json
 {
-  "restaurant": {
-    "vendor_public_id": "V-ABC123",
-    "restaurant_name": "Café Central",
-    "city": "Vienna",
-    "address": "Herrengasse 14",
-    "vendor_setting": { "description": "...", "logo_url": "...", ... },
-    "reviews": [ ... ]
-  },
-  "avg_rating": 4.5,
-  "review_count": 42
+  "data": [
+    {
+      "vendor_public_id": "V-ABC123",
+      "slug": "buffalo-burger",
+      "restaurant_name": "Buffalo Burger",
+      "city": "Vienna",
+      "address": "Herrengasse 14",
+      "logo_url": "https://example.com/logo.png",
+      "cover_photo_url": "https://example.com/cover.jpg",
+      "currency": "EUR",
+      "cuisines": ["burger", "Fast food"],
+      "price_label": "Budget-friendly",
+      "avg_rating": 4.2,
+      "review_count": 890,
+      "payment_methods": {
+        "card": true,
+        "cash": true
+      },
+      "loyalty": {
+        "enabled": true,
+        "points_per_euro": 20
+      },
+      "enable_reservations": true,
+      "distance_km": 1.8
+    }
+  ],
+  "current_page": 1,
+  "last_page": 3,
+  "per_page": 20,
+  "total": 48
 }
 ```
 
+**Notes:**
+- `cuisines` is derived from the restaurant's active menu categories.
+- `price_label` is computed from the average menu item price: `Budget-friendly` (≤€10), `Mid-range` (€10–25), `Fine dining` (€25–50), `Premium` (€50+). `null` if no menu items.
+- `distance_km` is only returned when `latitude` and `longitude` are provided.
+- `cuisine` filter matches by menu category ID.
+- `price_range` filter checks if the vendor has active menu items in the given price bracket.
+- Only restaurants with `is_live_and_discoverable = true` are returned.
+
 ---
 
-### 3.3 Get Restaurant Categories
+### 3.3 Restaurant Profile
+
+**GET** `/api/customer/restaurants/{vendorPublicId}`
+
+**Query Parameters (optional):**
+| Param | Type | Description |
+|-------|------|-------------|
+| `latitude` | float | Customer's current latitude (for distance) |
+| `longitude` | float | Customer's current longitude (for distance) |
+
+**Response (200):**
+```json
+{
+  "vendor_public_id": "V-ABC123",
+  "slug": "buffalo-burger",
+  "restaurant_name": "Buffalo Burger",
+  "city": "Maadi",
+  "address": "Maadi Street 9, Building 86, next to Al-Ezzabi Pharmacy",
+  "logo_url": "https://example.com/logo.png",
+  "cover_photo_url": "https://example.com/cover.jpg",
+  "currency": "EUR",
+  "cuisines": ["burger", "Fast food"],
+  "avg_rating": 4.2,
+  "review_count": 890,
+  "is_open": true,
+  "today_hours": "10:45 – 20:45",
+  "distance_km": 1.8,
+  "payment_methods": {
+    "card": true,
+    "cash": true
+  },
+  "loyalty": {
+    "enabled": true,
+    "points_per_euro": 20
+  },
+  "enable_reservations": true
+}
+```
+
+**Notes:**
+- `is_open` is computed from the vendor's `business_hours` for the current day/time.
+- `today_hours` shows today's open–close range, or `null` if closed today.
+- `distance_km` is only returned when `latitude` and `longitude` are provided.
+- `cuisines` is derived from the restaurant's active menu categories.
+
+---
+
+### 3.4 Get Restaurant Categories
 
 **GET** `/api/customer/restaurants/{vendorPublicId}/categories`
 
@@ -346,36 +443,131 @@ Returns profile info, recent restaurants, and loyalty overview.
 
 ---
 
-### 3.4 Get Restaurant Menu
+### 3.5 Get Restaurant Menu
 
 **GET** `/api/customer/restaurants/{vendorPublicId}/menu`
 
 **Query Parameters:**
 | Param | Type | Description |
 |-------|------|-------------|
-| `category_id` | int | Filter by category |
-| `search` | string | Search by item name |
+| `category_id` | int | Filter by category (optional) |
+| `search` | string | Search by item name (optional) |
 
-**Response (200):** Array of menu items with category, allergens, tags, and modifier groups.
+**Response (200):**
+```json
+[
+  {
+    "id": 42,
+    "name": "4 Piece chicken Box",
+    "description": "4 Piece of hand-breaded original chicken...",
+    "image_url": "https://example.com/items/chicken-box.jpg",
+    "price": 18.99,
+    "has_discount": false,
+    "discount_percent": null,
+    "discounted_price": null,
+    "rating": 4.4,
+    "review_count": 252,
+    "ordered_count": 1200,
+    "popularity_rank": 4,
+    "calories": 680,
+    "dietary_preference": null,
+    "category": {
+      "id": 1,
+      "name": "Burger",
+      "slug": "burger"
+    },
+    "allergens": ["Gluten", "Eggs"],
+    "tags": ["Popular", "Spicy"],
+    "modifier_groups": []
+  }
+]
+```
+
+**Notes:**
+- Both `category_id` and `search` are optional. If omitted, all active menu items are returned.
+- `popularity_rank` is computed from `ordered_count` (e.g. `4` = "#4 most liked").
+- `rating` is a percentage-style approval score (e.g. `88%` with `252` reviews).
+- `discount_percent` and `discounted_price` are only present when `has_discount` is `true`.
+- Each item includes its `category` for grouping/display.
 
 ---
 
-### 3.5 Get Menu Item Detail
+### 3.6 Get Menu Item Detail
 
 **GET** `/api/customer/restaurants/{vendorPublicId}/menu/{itemId}`
 
-**Response (200):** Single menu item with full details.
+**Response (200):**
+```json
+{
+  "id": 42,
+  "name": "4 Piece chicken Box",
+  "description": "4 Piece of hand-breaded original chicken with our special sauce and coleslaw.",
+  "image_url": "https://example.com/items/chicken-box.jpg",
+  "price": 18.99,
+  "has_discount": true,
+  "discount_percent": 15.00,
+  "discounted_price": 16.14,
+  "available": true,
+  "rating": 4.4,
+  "review_count": 252,
+  "ordered_count": 1200,
+  "calories": 680,
+  "fat": 32.50,
+  "carbs": 45.00,
+  "protein": 38.00,
+  "dietary_preference": null,
+  "ingredients": ["Chicken breast", "Breadcrumbs", "Flour", "Coleslaw"],
+  "category": {
+    "id": 1,
+    "name": "Burger",
+    "slug": "burger"
+  },
+  "allergens": [
+    { "id": 1, "name": "Gluten", "icon": "🌾" },
+    { "id": 3, "name": "Eggs", "icon": "🥚" }
+  ],
+  "tags": [
+    { "id": 1, "label": "Popular", "icon": "🔥" },
+    { "id": 4, "label": "Spicy", "icon": "🌶️" }
+  ],
+  "modifier_groups": [
+    {
+      "id": 1,
+      "name": "Choose your side",
+      "type": "single",
+      "is_required": true,
+      "min_selection": 1,
+      "max_selection": 1,
+      "options": [
+        { "id": 1, "name": "Fries", "price_adjustment": 0.00 },
+        { "id": 2, "name": "Onion Rings", "price_adjustment": 1.50 },
+        { "id": 3, "name": "Sweet Potato Fries", "price_adjustment": 2.00 }
+      ]
+    }
+  ]
+}
+```
+
+**Notes:**
+- `available` indicates if the item is currently in stock.
+- `ingredients` is a list of ingredient names (from the JSON column).
+- `fat`, `carbs`, `protein` are in grams; `null` if not set.
+- `dietary_preference` can be `vegetarian`, `vegan`, `gluten_free`, etc. or `null`.
+- `allergens` and `tags` include `icon` for UI display.
+- `modifier_groups` shows customisation options — `type` is `single` or `multiple`, with `min_selection`/`max_selection` constraints.
+- `discount_percent` and `discounted_price` are only present when `has_discount` is `true`.
+- Only active modifier groups and options are returned.
 
 ---
 
-### 3.6 Get Restaurant Tables
+### 3.7 Get Restaurant Tables
 
 **GET** `/api/customer/restaurants/{vendorPublicId}/tables`
 
 **Response (200):**
 ```json
 [
-  { "id": 1, "number": 1, "name": "Table 1", "qr_token": "uuid-token" }
+  { "id": 1, "number": 1, "name": "Table 1" }
 ]
 ```
 
