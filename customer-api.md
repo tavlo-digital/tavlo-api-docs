@@ -389,6 +389,8 @@ Returns all active menu categories across discoverable restaurants (deduplicated
       "restaurant_name": "Buffalo Burger",
       "city": "Vienna",
       "address": "Herrengasse 14",
+      "latitude": 48.2092,
+      "longitude": 16.3666,
       "logo_url": "https://example.com/logo.png",
       "cover_photo_url": "https://example.com/cover.jpg",
       "currency": "EUR",
@@ -396,6 +398,17 @@ Returns all active menu categories across discoverable restaurants (deduplicated
       "price_label": "Budget-friendly",
       "avg_rating": 4.2,
       "review_count": 890,
+      "is_open": true,
+      "today_hours": "10:45 – 20:45",
+      "business_hours": {
+        "monday":    { "open": "10:45", "close": "20:45", "closed": false },
+        "tuesday":   { "open": "10:45", "close": "20:45", "closed": false },
+        "wednesday": { "open": "10:45", "close": "20:45", "closed": false },
+        "thursday":  { "open": "10:45", "close": "20:45", "closed": false },
+        "friday":    { "open": "10:45", "close": "22:00", "closed": false },
+        "saturday":  { "open": "11:00", "close": "22:00", "closed": false },
+        "sunday":    { "closed": true }
+      },
       "payment_methods": {
         "card": true,
         "cash": true
@@ -404,7 +417,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
         "enabled": true,
         "points_per_euro": 20
       },
-      "enable_reservations": true,
+      "service_types": ["dine_in", "takeaway", "reservation"],
       "distance_km": 1.8
     }
   ],
@@ -418,9 +431,17 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 **Notes:**
 - `cuisines` is derived from the restaurant's active menu categories.
 - `price_label` is computed from the average menu item price: `Budget-friendly` (≤€10), `Mid-range` (€10–25), `Fine dining` (€25–50), `Premium` (€50+). `null` if no menu items.
-- `distance_km` is only returned when `latitude` and `longitude` are provided.
+- `latitude` / `longitude` are the restaurant's coordinates (may be `null` if not set by the vendor).
+- `is_open` is computed from `business_hours` for the current day/time. `today_hours` shows today's open–close range, or `null` if closed today.
+- `business_hours` is a per-day map. Each day has either `{ "open": "HH:MM", "close": "HH:MM", "closed": false }` or `{ "closed": true }`.
+- `distance_km` is only returned when `latitude` and `longitude` are provided in the request.
 - `cuisine` filter matches by menu category ID.
 - `price_range` filter checks if the vendor has active menu items in the given price bracket.
+- `service_type` filter:
+  - `dine_in` — vendor has at least one row in `restaurant_tables`.
+  - `takeaway` — vendor has a takeaway QR configured (`vendor_takeaway_qrs`).
+  - `reservation` — vendor's setting `enable_reservations = true`.
+- `service_types` (response) — array containing any combination of `dine_in`, `takeaway`, `reservation` indicating which services this restaurant offers (computed from the same sources as the filter).
 - Only restaurants with `is_live_and_discoverable = true` are returned.
 
 ---
@@ -443,6 +464,8 @@ Returns all active menu categories across discoverable restaurants (deduplicated
   "restaurant_name": "Buffalo Burger",
   "city": "Maadi",
   "address": "Maadi Street 9, Building 86, next to Al-Ezzabi Pharmacy",
+  "latitude": 29.9602,
+  "longitude": 31.2569,
   "logo_url": "https://example.com/logo.png",
   "cover_photo_url": "https://example.com/cover.jpg",
   "currency": "EUR",
@@ -451,6 +474,15 @@ Returns all active menu categories across discoverable restaurants (deduplicated
   "review_count": 890,
   "is_open": true,
   "today_hours": "10:45 – 20:45",
+  "business_hours": {
+    "monday":    { "open": "10:00", "close": "22:00", "closed": false },
+    "tuesday":   { "open": "10:00", "close": "22:00", "closed": false },
+    "wednesday": { "open": "10:00", "close": "22:00", "closed": false },
+    "thursday":  { "open": "10:00", "close": "22:00", "closed": false },
+    "friday":    { "open": "10:00", "close": "23:00", "closed": false },
+    "saturday":  { "open": "11:00", "close": "23:00", "closed": false },
+    "sunday":    { "open": "11:00", "close": "21:00", "closed": false }
+  },
   "distance_km": 1.8,
   "payment_methods": {
     "card": true,
@@ -460,7 +492,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
     "enabled": true,
     "points_per_euro": 20
   },
-  "enable_reservations": true
+  "service_types": ["dine_in", "takeaway", "reservation"]
 }
 ```
 
@@ -603,7 +635,140 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 
 ---
 
-### 3.7 Get Restaurant Tables
+### 3.7 Get Restaurant Reviews
+
+**GET** `/api/customer/restaurants/{vendorPublicId}/reviews`
+
+Returns all public (non-flagged) reviews for a restaurant, with reviewer info and the menu item being reviewed (if any).
+
+**Query Parameters:**
+| Param | Type | Description |
+|-------|------|-------------|
+| `rating` | int | Filter by star rating (1–5) |
+| `with_images` | bool | Only return reviews that include images |
+| `sort_by` | string | `recent` (default), `highest`, `lowest` |
+| `per_page` | int | Items per page (default: 20) |
+| `page` | int | Page number |
+
+**Response (200):**
+```json
+{
+  "data": [
+    {
+      "review_public_id": "rev_abc123...",
+      "rating": 5,
+      "text": "Loved the burger, juicy and fresh!",
+      "images": [
+        "https://example.com/reviews/img1.jpg",
+        "https://example.com/reviews/img2.jpg"
+      ],
+      "created_at": "2026-04-18T14:32:10+00:00",
+      "reviewer": {
+        "name": "John D.",
+        "profile_picture": "https://example.com/avatars/john.jpg"
+      },
+      "menu_items": [
+        {
+          "id": 42,
+          "name": "4 Piece chicken Box",
+          "slug": "4-piece-chicken-box",
+          "image_url": "https://example.com/items/chicken-box.jpg",
+          "quantity": 1
+        },
+        {
+          "id": 57,
+          "name": "Caesar Salad",
+          "slug": "caesar-salad",
+          "image_url": "https://example.com/items/caesar.jpg",
+          "quantity": 2
+        }
+      ],
+      "vendor_reply": "Thank you for the kind words!",
+      "vendor_replied_at": "2026-04-19T08:10:00+00:00"
+    }
+  ],
+  "current_page": 1,
+  "last_page": 3,
+  "per_page": 20,
+  "total": 48
+}
+```
+
+**Notes:**
+- Only non-flagged reviews are returned.
+- `menu_items` is derived from the order attached to the review. Each entry includes the item `name`, `quantity` ordered, and — when the vendor still has a matching menu item — its `id`, `slug`, and `image_url`. `id` and `image_url` are `null` if the item is no longer on the menu.
+- `images` is an array of image URLs uploaded by the reviewer (may be empty).
+- `reviewer.name` falls back to `"Anonymous"` if the customer has no name set.
+
+---
+
+### 3.8 Get Restaurant About
+
+**GET** `/api/customer/restaurants/{vendorPublicId}/about`
+
+Returns the public "About" profile for a restaurant — vanity stats, features, payment methods, legal/location info, working hours, and contact details (only the contact fields the vendor has marked as public).
+
+**Response (200):**
+```json
+{
+  "vendor_public_id": "V-ABC123",
+  "restaurant_name": "Buffalo Burger",
+  "description": "Authentic smash burgers since 2010.",
+  "years_of_experience": 15,
+  "signature_recipes_count": 12,
+  "happy_customers_count": 25400,
+  "restaurant_features": [
+    "Free Wi-Fi",
+    "Outdoor seating",
+    "Parking",
+    "Wheelchair accessible",
+    "Vegan options"
+  ],
+  "payment_methods": {
+    "cash": true,
+    "card": true,
+    "visa": true,
+    "mastercard": true,
+    "amex": false,
+    "apple_pay": true,
+    "google_pay": true,
+    "bank_transfer": false
+  },
+  "vat_number": "ATU12345678",
+  "address": "Herrengasse 14",
+  "city": "Vienna",
+  "country": "Austria",
+  "latitude": 48.2092,
+  "longitude": 16.3666,
+  "business_hours": {
+    "monday":    { "open": "10:00", "close": "22:00", "closed": false },
+    "tuesday":   { "open": "10:00", "close": "22:00", "closed": false },
+    "wednesday": { "open": "10:00", "close": "22:00", "closed": false },
+    "thursday":  { "open": "10:00", "close": "22:00", "closed": false },
+    "friday":    { "open": "10:00", "close": "23:00", "closed": false },
+    "saturday":  { "open": "11:00", "close": "23:00", "closed": false },
+    "sunday":    { "closed": true }
+  },
+  "service_types": ["dine_in", "takeaway", "reservation"],
+  "contact": {
+    "phone": "+43 1 234 5678",
+    "website": "https://example.com"
+  }
+}
+```
+
+**Notes:**
+- `restaurant_features` is a free-form array of feature labels chosen by the vendor (e.g. `Free Wi-Fi`, `Outdoor seating`, `Parking`, `Vegan options`).
+- `payment_methods` reflects every accepted method on the vendor settings.
+- `contact` is a partial object — each field is only included when the vendor has marked it as publicly visible:
+  - `phone` requires `show_phone_public = true` (default `true`)
+  - `email` requires `show_email_public = true` (default `false`)
+  - `website` requires `show_website_public = true` (default `true`)
+- Numeric stats (`years_of_experience`, `signature_recipes_count`, `happy_customers_count`) are `null` when the vendor hasn't set them.
+
+---
+
+### 3.9 Get Restaurant Tables
 
 **GET** `/api/customer/restaurants/{vendorPublicId}/tables`
 
