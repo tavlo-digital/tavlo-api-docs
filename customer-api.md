@@ -781,6 +781,65 @@ Returns the public "About" profile for a restaurant — vanity stats, features, 
 
 ---
 
+### 3.10 Scan Table QR (Create Session) 🔒
+
+**POST** `/api/customer/scan`
+
+Customer scans a printed table QR code and creates a new table scan session with a unique 4-digit PIN.
+
+**Authentication:** required (Bearer token).
+
+**Body (recommended — plain text):**
+
+Send the QR token as the raw request body.
+
+Header:
+`Content-Type: text/plain`
+
+Body:
+```
+d5938525-f2a5-4849-803e-d579582af11f
+```
+
+**Body (also accepted — JSON, backwards compatible):**
+```json
+{ "token": "d5938525-f2a5-4849-803e-d579582af11f" }
+```
+
+**Response (201):**
+```json
+{
+  "pin": "0473",
+  "session": {
+    "id": "12",
+    "status": "active",
+    "scannedAt": "2026-04-23T10:15:00+00:00"
+  },
+  "table": { "id": "5", "number": 3, "name": "T3" },
+  "vendor": { "id": "VID-8492", "name": "Bella Italia" }
+}
+```
+
+**Response (409) — table already has an active session:**
+```json
+{
+  "message": "This table already has an active session",
+  "status": "active"
+}
+```
+
+**Response (410) — invalid / inactive QR token:**
+```json
+{ "message": "This QR code is no longer valid" }
+```
+
+**Response (401):**
+```json
+{ "message": "Unauthenticated." }
+```
+
+---
+
 ## 4. Order History 🔒
 
 ### 4.1 List Restaurants with Orders
