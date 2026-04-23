@@ -783,7 +783,7 @@ Returns the public "About" profile for a restaurant — vanity stats, features, 
 
 ### 3.10 Scan Table QR (Create Session) 🔒
 
-**POST** `/api/customer/scan`
+**POST** `/api/customer/table/scan`
 
 Customer scans a printed table QR code and creates a new table scan session with a unique 4-digit PIN.
 
@@ -824,8 +824,81 @@ d5938525-f2a5-4849-803e-d579582af11f
 ```json
 {
   "message": "This table already has an active session",
-  "status": "active"
+  "status": "active",
+  "requiresPin": true,
+  "table": { "id": "5", "number": 3, "name": "T3" },
+  "vendor": { "id": "VID-8492", "name": "Bella Italia" }
 }
+```
+
+**Flow note:**
+- If scan returns `409` with `status = "active"`, the UI should show a PIN entry form.
+- The customer then submits that PIN to `POST /api/customer/table/pin` to join the already-active table session.
+
+**Response (410) — invalid / inactive QR token:**
+```json
+{ "message": "This QR code is no longer valid" }
+```
+
+**Response (401):**
+```json
+{ "message": "Unauthenticated." }
+```
+
+---
+
+### 3.11 Join Active Table With PIN 🔒
+
+**POST** `/api/customer/table/pin`
+
+When a table is already active, another customer can join that same table flow by entering the PIN shown by the first customer.
+
+**Authentication:** required (Bearer token).
+
+**Body:**
+```json
+{
+  "token": "d5938525-f2a5-4849-803e-d579582af11f",
+  "pin": "0473"
+}
+```
+
+**Response (201):**
+```json
+{
+  "pin": null,
+  "session": {
+    "id": "13",
+    "status": "active",
+    "scannedAt": "2026-04-23T10:17:00+00:00"
+  },
+  "table": { "id": "5", "number": 3, "name": "T3" },
+  "vendor": { "id": "VID-8492", "name": "Bella Italia" }
+}
+```
+
+**Behavior:**
+- A new `table_scan_sessions` row is created for the joining customer.
+- The joining customer does **not** receive a new PIN, so `pin` is returned as `null`.
+- Repeating the same request for a customer who is already joined returns the existing active session instead of creating a duplicate row.
+
+**Response (200) — customer already joined:**
+```json
+{
+  "pin": null,
+  "session": {
+    "id": "13",
+    "status": "active",
+    "scannedAt": "2026-04-23T10:17:00+00:00"
+  },
+  "table": { "id": "5", "number": 3, "name": "T3" },
+  "vendor": { "id": "VID-8492", "name": "Bella Italia" }
+}
+```
+
+**Response (422) — invalid PIN:**
+```json
+{ "message": "The provided PIN is invalid for this table" }
 ```
 
 **Response (410) — invalid / inactive QR token:**
