@@ -913,6 +913,116 @@ When a table is already active, another customer can join that same table flow b
 
 ---
 
+### 3.12 Table Cart 🔒
+
+A **table cart** is the live cart of every customer currently sitting at the same `restaurant_table`. It is automatically scoped to the authenticated customer's currently-active `table_scan_session`.
+
+**Authentication:** required (Bearer token).
+
+**Scope rule:** the customer must have a row in `table_scan_sessions` with `status = active`. The cart includes every active session at the same `restaurant_table_id`.
+
+If the customer has no active session, every cart endpoint returns:
+
+```json
+{ "message": "No active table session found." }
+```
+with HTTP `422`.
+
+#### 3.12.1 Get Table Cart
+
+**GET** `/api/customer/cart`
+
+Returns all items per person at the same table.
+
+**Response (200):**
+```json
+{
+  "people": [
+    {
+      "session_id": 12,
+      "customer_id": 7,
+      "is_me": true,
+      "name": "Alice Smith",
+      "personal_items": [
+        {
+          "id": 1,
+          "quantity": 2,
+          "notes": "No salt",
+          "menu_item": { "id": 42, "name": "Fries", "price": 3.50, "image_url": null }
+        }
+      ]
+    },
+    {
+      "session_id": 13,
+      "customer_id": 8,
+      "is_me": false,
+      "name": "Bob Jones",
+      "personal_items": []
+    }
+  ]
+}
+```
+
+#### 3.12.2 Add Item
+
+**POST** `/api/customer/cart/items`
+
+Adds an item to the authenticated customer's cart.
+
+**Body:**
+```json
+{
+  "menu_item_id": 42,
+  "quantity": 2,
+  "notes": "No salt"
+}
+```
+
+**Validation:**
+- `menu_item_id`: required, must exist in `menu_items`
+- `quantity`: optional, integer, 1–99 (default `1`)
+- `notes`: optional, string, max 500
+
+**Response (201):**
+```json
+{
+  "id": 1,
+  "quantity": 2,
+  "notes": "No salt",
+  "menu_item": { "id": 42, "name": "Fries", "price": 3.50, "image_url": null }
+}
+```
+
+#### 3.12.3 Update Item
+
+**PATCH** `/api/customer/cart/items/{id}`
+
+Update quantity or notes on an item the customer owns.
+
+**Body (all optional):**
+```json
+{
+  "quantity": 3,
+  "notes": "Extra crispy"
+}
+```
+
+**Response (200):** updated item payload.
+
+**Response (404):** if the item does not belong to the customer's current session.
+
+#### 3.12.4 Remove Item
+
+**DELETE** `/api/customer/cart/items/{id}`
+
+Removes an item owned by the current session.
+
+**Response (204):** empty.
+
+**Response (404):** if the item does not belong to the customer's current session.
+
+---
+
 ## 4. Order History 🔒
 
 ### 4.1 List Restaurants with Orders
