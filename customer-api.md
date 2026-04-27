@@ -11,6 +11,10 @@ All authenticated endpoints require a Bearer token via Laravel Sanctum.
 Authorization: Bearer {token}
 ```
 
+## Media URLs
+
+All media fields (`logo_url`, `cover_photo_url`, `image_url`, `profile_picture`, review `images`, etc.) are returned as **absolute URLs** pointing at the backend, e.g. `http://localhost:8000/media/vendors/1/logo/abc.png`. Files are publicly accessible — no signed token or auth header is required to load them, so the frontend can use the URL directly in `<img>` tags.
+
 ---
 
 ## 0. Health & Diagnostics (Public)
@@ -299,7 +303,7 @@ Returns profile info, recent restaurants, and loyalty overview.
   "gender": "male",
   "date_of_birth": "1990-01-15",
   "address": "123 Main Street, Vienna",
-  "profile_picture": "https://example.com/photo.jpg"
+  "profile_picture": "http://localhost:8000/media/customers/1/avatar/abc123.jpg"
 }
 ```
 
@@ -391,8 +395,8 @@ Returns all active menu categories across discoverable restaurants (deduplicated
       "address": "Herrengasse 14",
       "latitude": 48.2092,
       "longitude": 16.3666,
-      "logo_url": "https://example.com/logo.png",
-      "cover_photo_url": "https://example.com/cover.jpg",
+      "logo_url": "http://localhost:8000/media/vendors/1/logo/iOSwbdVpswLKtayOyYNvAIpp1OKbtZamP6XQOuKg.png",
+      "cover_photo_url": "http://localhost:8000/media/vendors/1/cover/Enl7hMpbuJ6GoYZ60TV415fa75oSHcTLreFlOgxf.png",
       "currency": "EUR",
       "cuisines": ["burger", "Fast food"],
       "price_label": "Budget-friendly",
@@ -418,7 +422,8 @@ Returns all active menu categories across discoverable restaurants (deduplicated
         "points_per_euro": 20
       },
       "service_types": ["dine_in", "takeaway", "reservation"],
-      "distance_km": 1.8
+      "distance_km": 1.8,
+      "is_favorite": false
     }
   ],
   "current_page": 1,
@@ -466,8 +471,8 @@ Returns all active menu categories across discoverable restaurants (deduplicated
   "address": "Maadi Street 9, Building 86, next to Al-Ezzabi Pharmacy",
   "latitude": 29.9602,
   "longitude": 31.2569,
-  "logo_url": "https://example.com/logo.png",
-  "cover_photo_url": "https://example.com/cover.jpg",
+  "logo_url": "http://localhost:8000/media/vendors/1/logo/iOSwbdVpswLKtayOyYNvAIpp1OKbtZamP6XQOuKg.png",
+  "cover_photo_url": "http://localhost:8000/media/vendors/1/cover/Enl7hMpbuJ6GoYZ60TV415fa75oSHcTLreFlOgxf.png",
   "currency": "EUR",
   "cuisines": ["burger", "Fast food"],
   "avg_rating": 4.2,
@@ -501,6 +506,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 - `today_hours` shows today's open–close range, or `null` if closed today.
 - `distance_km` is only returned when `latitude` and `longitude` are provided.
 - `cuisines` is derived from the restaurant's active menu categories.
+- `is_favorite` is `true` when the request is authenticated and the customer has favorited this restaurant; `false` otherwise (including for unauthenticated requests). Not shown above — also returned in the response payload.
 
 ---
 
@@ -535,7 +541,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
     "id": 42,
     "name": "4 Piece chicken Box",
     "description": "4 Piece of hand-breaded original chicken...",
-    "image_url": "https://example.com/items/chicken-box.jpg",
+    "image_url": "http://localhost:8000/media/menu-items/42/photo/abc123.jpg",
     "price": 18.99,
     "has_discount": false,
     "discount_percent": null,
@@ -558,6 +564,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 ]
 ```
 
+
 **Notes:**
 - Both `category_id` and `search` are optional. If omitted, all active menu items are returned.
 - `popularity_rank` is computed from `ordered_count` (e.g. `4` = "#4 most liked").
@@ -577,7 +584,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
   "id": 42,
   "name": "4 Piece chicken Box",
   "description": "4 Piece of hand-breaded original chicken with our special sauce and coleslaw.",
-  "image_url": "https://example.com/items/chicken-box.jpg",
+  "image_url": "http://localhost:8000/media/menu-items/42/photo/abc123.jpg",
   "price": 18.99,
   "has_discount": true,
   "discount_percent": 15.00,
@@ -659,27 +666,27 @@ Returns all public (non-flagged) reviews for a restaurant, with reviewer info an
       "rating": 5,
       "text": "Loved the burger, juicy and fresh!",
       "images": [
-        "https://example.com/reviews/img1.jpg",
-        "https://example.com/reviews/img2.jpg"
+        "http://localhost:8000/media/reviews/15/photos/img1.jpg",
+        "http://localhost:8000/media/reviews/15/photos/img2.jpg"
       ],
       "created_at": "2026-04-18T14:32:10+00:00",
       "reviewer": {
         "name": "John D.",
-        "profile_picture": "https://example.com/avatars/john.jpg"
+        "profile_picture": "http://localhost:8000/media/customers/1/avatar/abc123.jpg"
       },
       "menu_items": [
         {
           "id": 42,
           "name": "4 Piece chicken Box",
           "slug": "4-piece-chicken-box",
-          "image_url": "https://example.com/items/chicken-box.jpg",
+          "image_url": "http://localhost:8000/media/menu-items/42/photo/abc123.jpg",
           "quantity": 1
         },
         {
           "id": 57,
           "name": "Caesar Salad",
           "slug": "caesar-salad",
-          "image_url": "https://example.com/items/caesar.jpg",
+          "image_url": "http://localhost:8000/media/menu-items/57/photo/def456.jpg",
           "quantity": 2
         }
       ],
@@ -690,7 +697,18 @@ Returns all public (non-flagged) reviews for a restaurant, with reviewer info an
   "current_page": 1,
   "last_page": 3,
   "per_page": 20,
-  "total": 48
+  "total": 48,
+  "review_summary": {
+    "average_rating": 4.7,
+    "total_reviews": 128,
+    "rating_breakdown": [
+      { "star": 5, "count": 80, "percent": 62.5 },
+      { "star": 4, "count": 30, "percent": 23.4 },
+      { "star": 3, "count": 10, "percent": 7.8 },
+      { "star": 2, "count": 5, "percent": 3.9 },
+      { "star": 1, "count": 3, "percent": 2.4 }
+    ]
+  }
 }
 ```
 
@@ -699,6 +717,9 @@ Returns all public (non-flagged) reviews for a restaurant, with reviewer info an
 - `menu_items` is derived from the order attached to the review. Each entry includes the item `name`, `quantity` ordered, and — when the vendor still has a matching menu item — its `id`, `slug`, and `image_url`. `id` and `image_url` are `null` if the item is no longer on the menu.
 - `images` is an array of image URLs uploaded by the reviewer (may be empty).
 - `reviewer.name` falls back to `"Anonymous"` if the customer has no name set.
+- `review_summary` is computed across **all** non-flagged reviews for this restaurant — it is independent of the `rating`, `with_images`, and pagination filters, so the breakdown stays stable while the user filters the list.
+  - `average_rating` is rounded to 1 decimal (0 if there are no reviews).
+  - `rating_breakdown` always includes all 5 buckets (5★ → 1★), with `count` and `percent` (rounded to 1 decimal).
 
 ---
 
@@ -718,11 +739,11 @@ Returns the public "About" profile for a restaurant — vanity stats, features, 
   "signature_recipes_count": 12,
   "happy_customers_count": 25400,
   "restaurant_features": [
-    "Free Wi-Fi",
-    "Outdoor seating",
-    "Parking",
-    "Wheelchair accessible",
-    "Vegan options"
+    { "title": "Free Wi-Fi", "description": "High-speed wireless throughout the venue." },
+    { "title": "Outdoor seating", "description": "Heated terrace open year-round." },
+    { "title": "Parking", "description": "Free customer parking next door." },
+    { "title": "Wheelchair accessible", "description": null },
+    { "title": "Vegan options", "description": "Dedicated vegan menu section." }
   ],
   "payment_methods": {
     "cash": true,
@@ -758,13 +779,16 @@ Returns the public "About" profile for a restaurant — vanity stats, features, 
 ```
 
 **Notes:**
-- `restaurant_features` is a free-form array of feature labels chosen by the vendor (e.g. `Free Wi-Fi`, `Outdoor seating`, `Parking`, `Vegan options`).
+- `restaurant_features` is a list of structured feature objects chosen by the vendor. Each entry has:
+  - `title` — short label (string, required, max 100)
+  - `description` — optional longer explanation (string, max 500, may be `null`)
 - `payment_methods` reflects every accepted method on the vendor settings.
 - `contact` is a partial object — each field is only included when the vendor has marked it as publicly visible:
   - `phone` requires `show_phone_public = true` (default `true`)
   - `email` requires `show_email_public = true` (default `false`)
   - `website` requires `show_website_public = true` (default `true`)
 - Numeric stats (`years_of_experience`, `signature_recipes_count`, `happy_customers_count`) are `null` when the vendor hasn't set them.
+- `is_favorite` is included in the response (`true`/`false`). Always `false` for unauthenticated requests.
 
 ---
 
@@ -1023,51 +1047,301 @@ Removes an item owned by the current session.
 
 ---
 
-## 4. Order History 🔒
+### 3.13 Table Payment Summary 🔒
 
-### 4.1 List Restaurants with Orders
+**GET** `/api/customer/table/order`
 
-**GET** `/api/customer/orders/restaurants`
+Returns a payment-ready snapshot of the authenticated customer's current table:
+- one node per active session at the same table (name, items, total)
+- the table-wide grand total
 
-Returns all restaurants where the customer has placed orders.
+**Authentication:** required (Bearer token).
 
-**Response (200):**
-```json
-[
-  {
-    "vendor_public_id": "V-ABC123",
-    "restaurant_name": "Café Central",
-    "orders_count": 5,
-    "orders_sum_amount": "156.50",
-    "orders_max_created_at": "2026-04-01T..."
-  }
-]
-```
-
----
-
-### 4.2 Restaurant Order History
-
-**GET** `/api/customer/orders/restaurants/{vendorPublicId}`
-
-**Query Parameters:** `per_page`, `page`
+**Scope rule:** the customer must have an `active` row in `table_scan_sessions`. The summary is computed across every active session at the same `restaurant_table_id`.
 
 **Response (200):**
 ```json
 {
-  "restaurant": { "id": "V-ABC123", "name": "Café Central" },
-  "summary": { "total_orders": 5, "total_spent": "156.50" },
-  "orders": { "data": [ ... ], "current_page": 1, ... }
+  "table": {
+    "id": 5,
+    "number": 3,
+    "name": "T3"
+  },
+  "people": [
+    {
+      "session_id": 12,
+      "customer_id": 7,
+      "is_me": true,
+      "name": "Alice Smith",
+      "item_count": 3,
+      "total_price": 12.50,
+      "items": [
+        {
+          "cart_item_id": 1,
+          "menu_item_id": 42,
+          "name": "Fries",
+          "image_url": null,
+          "quantity": 2,
+          "unit_price": 3.50,
+          "total_price": 7.00,
+          "is_mine": true
+        },
+        {
+          "cart_item_id": 2,
+          "menu_item_id": 51,
+          "name": "Coke",
+          "image_url": null,
+          "quantity": 1,
+          "unit_price": 5.50,
+          "total_price": 5.50,
+          "is_mine": true
+        }
+      ]
+    },
+    {
+      "session_id": 13,
+      "customer_id": 8,
+      "is_me": false,
+      "name": "Bob Jones",
+      "item_count": 1,
+      "total_price": 18.99,
+      "items": [
+        {
+          "cart_item_id": 3,
+          "menu_item_id": 42,
+          "name": "4 Piece chicken Box",
+          "image_url": "http://localhost:8000/media/menu-items/42/photo/abc123.jpg",
+          "quantity": 1,
+          "unit_price": 18.99,
+          "total_price": 18.99,
+          "is_mine": false
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "item_count": 4,
+    "total_price": 31.49
+  }
 }
+```
+
+**Notes:**
+- The current table is derived from the customer's active `table_scan_sessions` row — no `table_id` needs to be passed in the URL or body.
+- The authenticated customer's own line is included in `people[]` and identified by `is_me: true`.
+- `is_mine` on an item is `true` when the item belongs to the authenticated customer's session.
+- `unit_price` and `total_price` are floats in the restaurant's currency. `total_price` per item = `unit_price × quantity`.
+- `summary.total_price` equals the sum of `people[].total_price`.
+- `name` falls back to `"Guest"` if the joined customer has no name set.
+
+**Response (422) — no active table session:**
+```json
+{ "message": "No active table session found." }
+```
+
+**Response (401):**
+```json
+{ "message": "Unauthenticated." }
 ```
 
 ---
 
-### 4.3 Order Detail
+### 3.14 Pay Now (Create Pending Order) 🔒
 
-**GET** `/api/customer/orders/{orderPublicId}`
+**POST** `/api/customer/table/order`
 
-**Response (200):** Full order details including vendor, items, amounts, fees.
+Creates a `pending` order for the authenticated customer based on the current table cart, optionally splitting selected items across N people. The order is created with `payment_pending = true` (no money is captured here — payment confirmation happens via a separate flow).
+
+**Authentication:** required (Bearer token).
+
+**Body (all fields optional):**
+```json
+{
+  "shared_items": [
+    { "cart_item_id": 3, "shared_between": 3 },
+    { "cart_item_id": 7, "shared_between": 2 }
+  ]
+}
+```
+
+**Validation:**
+- `shared_items`: optional array.
+- `shared_items.*.cart_item_id`: required integer. Must reference a cart item that belongs to **any** active session at the same table (own cart or someone else's).
+- `shared_items.*.shared_between`: required integer, `2`–`99`.
+
+**Total computation:**
+For each cart item across the table:
+- **Not shared** + mine → full `line_total` is added to my bill.
+- **Not shared** + someone else's → not on my bill.
+- **Shared** → `share = line_total / shared_between`:
+  - If the item is in **my** cart, I am billed only `share` (so `(N-1)/N` is removed from what I would have paid).
+  - If the item is in **someone else's** cart, I am billed `share` extra.
+
+`line_total = unit_price × quantity` (rounded to 2 decimals). `share` is also rounded to 2 decimals.
+
+**Response (201):**
+```json
+{
+  "order": {
+    "id": 101,
+    "order_public_id": "ord-aB3xK9pQrS12",
+    "status": "pending",
+    "payment_pending": true,
+    "amount": 16.49,
+    "currency": "EUR",
+    "items_count": 3,
+    "table_scan_session_id": 12,
+    "vendor_id": 1,
+    "created_at": "2026-04-27T10:30:00+00:00"
+  }
+}
+```
+
+**Notes:**
+- The order is linked to the customer via `table_scan_session_id` (the `orders` table no longer carries a direct `customer_id`).
+- The full per-line item snapshot and the split definitions are persisted on the order (`orders.items` and `orders.shared_items`) but are **not** returned by this endpoint — the response only exposes the totals.
+- `payment_pending = true` and `status = "pending"` until a separate payment-confirmation step updates them.
+- An empty body or omitted `shared_items` produces a non-split order (full prices for own items only).
+
+**Response (422) — invalid shared cart item:**
+```json
+{
+  "message": "One or more shared cart items do not belong to this table.",
+  "invalid_cart_item_ids": [99]
+}
+```
+
+**Response (422) — no active table session:**
+```json
+{ "message": "No active table session found." }
+```
+
+**Response (401):**
+```json
+{ "message": "Unauthenticated." }
+```
+
+---
+
+## 4. Table History 🔒
+
+### 4.1 Get Current Table History
+
+**GET** `/api/customer/table/history`
+
+Returns the full history view of the customer's currently active table — table + vendor + active session metadata, and every order the authenticated customer has placed during the current table session (full per-order snapshot, including items and shared-item splits).
+
+**Authentication:** required (Bearer token).
+
+**Scope rule:** the customer must have an `active` row in `table_scan_sessions`. The response is scoped to **that single active session** only — orders from other people sitting at the same table are not included.
+
+**Response (200):**
+```json
+{
+  "table": {
+    "id": 5,
+    "number": 3,
+    "name": "T3"
+  },
+  "vendor": {
+    "vendor_public_id": "V-ABC123",
+    "restaurant_name": "Buffalo Burger"
+  },
+  "session": {
+    "id": 12,
+    "status": "active",
+    "scanned_at": "2026-04-27T10:15:00+00:00"
+  },
+  "people": [
+    {
+      "session_id": 12,
+      "customer_id": 7,
+      "is_me": true,
+      "name": "Alice Smith",
+      "scanned_at": "2026-04-27T10:15:00+00:00",
+      "status": "active",
+      "orders_count": 1,
+      "total_amount": 16.49,
+      "orders": [
+        {
+          "id": 101,
+          "order_public_id": "ord-aB3xK9pQrS12",
+          "status": "pending",
+          "payment_pending": true,
+          "payment_received": false,
+          "amount": 16.49,
+          "currency": "EUR",
+          "items_count": 3,
+          "items": [
+            {
+              "cart_item_id": 1,
+              "menu_item_id": 42,
+              "name": "Fries",
+              "image_url": null,
+              "quantity": 2,
+              "unit_price": 3.50,
+              "line_total": 7.00,
+              "is_mine": true,
+              "shared": false,
+              "amount_billed": 7.00
+            },
+            {
+              "cart_item_id": 3,
+              "menu_item_id": 51,
+              "name": "Pizza",
+              "image_url": null,
+              "quantity": 1,
+              "unit_price": 18.99,
+              "line_total": 18.99,
+              "is_mine": false,
+              "shared": true,
+              "shared_between": 2,
+              "my_share": 9.49,
+              "amount_billed": 9.49
+            }
+          ],
+          "shared_items": [
+            {
+              "cart_item_id": 3,
+              "menu_item_id": 51,
+              "name": "Pizza",
+              "quantity": 1,
+              "line_total": 18.99,
+              "shared_between": 2,
+              "my_share": 9.49,
+              "is_mine": false
+            }
+          ],
+          "order_type": "dine-in",
+          "table_scan_session_id": 12,
+          "created_at": "2026-04-27T10:30:00+00:00"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "orders_count": 1,
+    "total_amount": 16.49
+  }
+}
+```
+
+**Notes:**
+- The current table is derived from the customer's active `table_scan_sessions` row — no `table_id` needs to be passed.
+- `people[]` always contains exactly **one** entry — the authenticated customer's own active session (`is_me: true`). Other people sitting at the same table are intentionally excluded.
+- `orders[]` is the **full, unedited** snapshot persisted on the `orders` row at pay-now time, including the per-line `items` array and the `shared_items` split definitions.
+- `total_amount` is the sum of `amount` across the customer's orders. `summary.total_amount` mirrors it.
+- `name` falls back to `"Guest"` if the customer has no name set.
+
+**Response (422) — no active table session:**
+```json
+{ "message": "No active table session found." }
+```
+
+**Response (401):**
+```json
+{ "message": "Unauthenticated." }
+```
 
 ---
 
@@ -1155,28 +1429,82 @@ Returns wallet details and paginated transaction history.
 
 ## 7. Favorites 🔒
 
+Favorite restaurants are stored per customer in the `customer_favorites` pivot table. The `is_favorite` flag on restaurant browsing responses (3.2 List Restaurants, 3.3 Restaurant Profile, 3.8 Restaurant About) is derived from this list — it is `true` when the request carries a valid customer Bearer token and the restaurant is in the customer's favorites, and `false` otherwise (including unauthenticated requests).
+
 ### 7.1 List Favorites
 
 **GET** `/api/customer/favorites`
+
+Returns the customer's favorite restaurants.
+
+**Response (200):**
+```json
+[
+  {
+    "id": 1,
+    "vendor_public_id": "V-ABC123",
+    "restaurant_name": "Buffalo Burger",
+    "slug": "buffalo-burger",
+    "city": "Vienna",
+    "address": "Herrengasse 14",
+    "logo_url": "http://localhost:8000/media/vendors/1/logo/abc.png",
+    "cover_photo_url": "http://localhost:8000/media/vendors/1/cover/def.png",
+    "avg_rating": 4.2,
+    "review_count": 890,
+    "is_open": true,
+    "status": "Open"
+  }
+]
+```
+
+**Notes:**
+- `avg_rating` is rounded to 1 decimal (0 if no reviews). `review_count` is the total number of reviews.
+- `is_open` is computed from the vendor's `business_hours` for the current day/time.
+- `status` is the human-readable string `"Open"` or `"Closed"`, mirroring `is_open`.
 
 ---
 
 ### 7.2 Add Favorite
 
-**POST** `/api/customer/favorites`
+**POST** `/api/customer/favorites/{vendorPublicId}/add` 🔒
 
-**Body:**
+Adds the given restaurant to the authenticated customer's favorites. The restaurant is identified by the `vendorPublicId` URL segment — no request body is required.
+
+**Path Parameters:**
+- `vendorPublicId` — the restaurant's `vendor_public_id` (e.g. `V-ABC123`).
+
+**Response (201):**
 ```json
-{
-  "vendor_public_id": "V-ABC123"
-}
+{ "message": "Restaurant added to favorites." }
 ```
+
+**Response (404):**
+```json
+{ "message": "Not found." }
+```
+
+Idempotent — re-adding an existing favorite returns `201` without creating a duplicate row.
 
 ---
 
 ### 7.3 Remove Favorite
 
-**DELETE** `/api/customer/favorites/{vendorPublicId}`
+**DELETE** `/api/customer/favorites/{vendorPublicId}/delete` 🔒
+
+Removes the given restaurant from the authenticated customer's favorites.
+
+**Path Parameters:**
+- `vendorPublicId` — the restaurant's `vendor_public_id`.
+
+**Response (200):**
+```json
+{ "message": "Restaurant removed from favorites." }
+```
+
+**Response (404):**
+```json
+{ "message": "Not found." }
+```
 
 ---
 
