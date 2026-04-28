@@ -875,6 +875,9 @@ d5938525-f2a5-4849-803e-d579582af11f
 **Response (201):**
 ```json
 {
+  "message": "Table session started",
+  "status": "active",
+  "requiresPin": true,
   "pin": "0473",
   "session": {
     "id": "12",
@@ -892,10 +895,18 @@ d5938525-f2a5-4849-803e-d579582af11f
   "message": "This table already has an active session",
   "status": "active",
   "requiresPin": true,
+  "pin": "0473",
+  "session": {
+    "id": "12",
+    "status": "active",
+    "scannedAt": "2026-04-23T10:15:00+00:00"
+  },
   "table": { "id": "5", "number": 3, "name": "T3" },
   "vendor": { "id": "VID-8492", "name": "Bella Italia" }
 }
 ```
+
+> **Note:** `pin` in the 409 payload is the existing owner PIN — only the original scanning customer (or an admin/debug context) should rely on it. Joining customers should still be sent through `POST /api/customer/table/pin` with the PIN they were given verbally / on screen.
 
 **Flow note:**
 - If scan returns `409` with `status = "active"`, the UI should show a PIN entry form.
@@ -932,6 +943,9 @@ When a table is already active, another customer can join that same table flow b
 **Response (201):**
 ```json
 {
+  "message": "Joined table session",
+  "status": "active",
+  "requiresPin": false,
   "pin": null,
   "session": {
     "id": "13",
@@ -951,6 +965,9 @@ When a table is already active, another customer can join that same table flow b
 **Response (200) — customer already joined:**
 ```json
 {
+  "message": "Already joined this table session",
+  "status": "active",
+  "requiresPin": false,
   "pin": null,
   "session": {
     "id": "13",
