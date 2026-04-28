@@ -1020,6 +1020,15 @@ Returns all items per person at the same table.
 **Response (200):**
 ```json
 {
+  "table": {
+    "id": 5,
+    "number": 3,
+    "name": "T3"
+  },
+  "vendor": {
+    "vendor_public_id": "V-ABC123",
+    "restaurant_name": "Buffalo Burger"
+  },
   "people": [
     {
       "session_id": 12,
