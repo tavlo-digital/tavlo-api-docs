@@ -104,7 +104,49 @@ Returns API and database status.
 
 ---
 
-### 1.2 Login (Email/Password)
+### 1.2 Login as Guest
+
+**POST** `/api/customer/guest`
+
+Creates a brand-new guest customer and returns a Bearer token. The customer is created with `account_type = "guest"` and a system-generated unique email, phone, and password — none of those values need to be supplied. The client may optionally pass a display name.
+
+**Body (all fields optional):**
+```json
+{
+  "first_name": "Alice",
+  "last_name": "Smith"
+}
+```
+
+**Validation:**
+- `first_name`: nullable, string, max 255 (defaults to `"Guest"` when omitted)
+- `last_name`: nullable, string, max 255 (defaults to empty string when omitted)
+
+**Response (201):**
+```json
+{
+  "user": {
+    "id": 42,
+    "customer_public_id": "cust_abc123...",
+    "first_name": "Alice",
+    "last_name": "Smith",
+    "email": "guest_a1b2c3d4e5@tavlo.guest",
+    "phone": "guest-a1b2c3d4e5",
+    "account_type": "guest",
+    "registration_source": "guest"
+  },
+  "token": "5|guesttoken..."
+}
+```
+
+**Notes:**
+- Each call creates a **new** guest customer — the endpoint is not idempotent. The caller should persist the returned token and reuse it instead of calling this endpoint repeatedly.
+- The generated `email` and `phone` are placeholders, only used to satisfy the unique constraints on `customers.email` / `customers.phone`. They are not real contact addresses.
+- A guest can later be upgraded to a registered account by the standard registration flow (out of scope here).
+
+---
+
+### 1.3 Login (Email/Password)
 
 **POST** `/api/customer/login`
 
@@ -129,7 +171,7 @@ Returns API and database status.
 
 ---
 
-### 1.3 Social Register (Google / Apple / Facebook)
+### 1.4 Social Register (Google / Apple / Facebook)
 
 **POST** `/api/customer/social/register`
 
@@ -174,7 +216,7 @@ Creates a new customer or links a social account to an existing email. The `acce
 
 ---
 
-### 1.4 Social Login (Google / Apple / Facebook)
+### 1.5 Social Login (Google / Apple / Facebook)
 
 **POST** `/api/customer/social/login`
 
@@ -206,7 +248,7 @@ The `access_token` is verified server-side against the provider's API.
 
 ---
 
-### 1.5 Get Current User
+### 1.6 Get Current User
 
 **GET** `/api/customer/me` 🔒
 
@@ -229,7 +271,7 @@ The `access_token` is verified server-side against the provider's API.
 
 ---
 
-### 1.6 Logout
+### 1.7 Logout
 
 **POST** `/api/customer/logout` 🔒
 
@@ -244,7 +286,7 @@ Revokes the current access token.
 
 ---
 
-### 1.7 Logout All Devices
+### 1.8 Logout All Devices
 
 **POST** `/api/customer/logout-all` 🔒
 
