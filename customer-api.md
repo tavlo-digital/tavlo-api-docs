@@ -120,7 +120,7 @@ Creates a brand-new guest customer and returns a Bearer token. The customer is c
 
 **Validation:**
 - `first_name`: nullable, string, max 255 (defaults to `"Guest"` when omitted)
-- `last_name`: nullable, string, max 255 (defaults to empty string when omitted)
+- `last_name`: nullable, string, max 255 (defaults to a random 5–6 character uppercase string when omitted)
 
 **Response (201):**
 ```json
