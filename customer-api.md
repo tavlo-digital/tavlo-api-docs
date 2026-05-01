@@ -277,6 +277,11 @@ The `access_token` is verified server-side against the provider's API.
 
 Revokes the current access token.
 
+**Body:**
+```json
+{}
+```
+
 **Response (200):**
 ```json
 {
@@ -291,6 +296,11 @@ Revokes the current access token.
 **POST** `/api/customer/logout-all` 🔒
 
 Revokes all access tokens for the customer.
+
+**Body:**
+```json
+{}
+```
 
 **Response (200):**
 ```json
@@ -996,7 +1006,59 @@ When a table is already active, another customer can join that same table flow b
 
 ---
 
-### 3.12 Table Cart 🔒
+### 3.12 Close Table Session 🔒
+
+**POST** `/api/customer/table/close`
+
+Closes the authenticated customer's active table scan session for the given restaurant + table by setting `status = closed` and `closed_at = now()` on the matching `table_scan_sessions` row.
+
+**Authentication:** required (Bearer token).
+
+**Body:**
+```json
+{
+  "vendor_public_id": "V-ABC123",
+  "table_id": 5
+}
+```
+
+**Validation:**
+- `vendor_public_id`: required, string — the restaurant's `vendor_public_id`.
+- `table_id`: required, integer — the `restaurant_tables.id` for the table to close.
+
+**Response (200):**
+```json
+{
+  "message": "Table session closed",
+  "status": "closed",
+  "session": {
+    "id": "13",
+    "status": "closed",
+    "scannedAt": "2026-04-23T10:17:00+00:00",
+    "closedAt": "2026-04-23T11:42:00+00:00"
+  },
+  "table": { "id": "5", "number": 3, "name": "T3" },
+  "vendor": { "id": "V-ABC123", "name": "Bella Italia" }
+}
+```
+
+**Notes:**
+- Only the requesting customer's own active session at this exact `vendor_id` + `restaurant_table_id` is affected. Other people sitting at the same table keep their sessions open.
+- If the customer has no active session matching the supplied restaurant + table, the endpoint returns `422 No active table session found.`
+
+**Response (422) — no active table session:**
+```json
+{ "message": "No active table session found." }
+```
+
+**Response (401):**
+```json
+{ "message": "Unauthenticated." }
+```
+
+---
+
+### 3.13 Table Cart 🔒
 
 A **table cart** is the live cart of every customer currently sitting at the same `restaurant_table`. It is automatically scoped to the authenticated customer's currently-active `table_scan_session`.
 
@@ -1011,7 +1073,7 @@ If the customer has no active session, every cart endpoint returns:
 ```
 with HTTP `422`.
 
-#### 3.12.1 Get Table Cart
+#### 3.13.1 Get Table Cart
 
 **GET** `/api/customer/cart`
 
@@ -1055,7 +1117,7 @@ Returns all items per person at the same table.
 }
 ```
 
-#### 3.12.2 Add Item
+#### 3.13.2 Add Item
 
 **POST** `/api/customer/cart/items`
 
@@ -1085,7 +1147,7 @@ Adds an item to the authenticated customer's cart.
 }
 ```
 
-#### 3.12.3 Update Item
+#### 3.13.3 Update Item
 
 **PATCH** `/api/customer/cart/items/{id}`
 
@@ -1103,7 +1165,7 @@ Update quantity or notes on an item the customer owns.
 
 **Response (404):** if the item does not belong to the customer's current session.
 
-#### 3.12.4 Remove Item
+#### 3.13.4 Remove Item
 
 **DELETE** `/api/customer/cart/items/{id}`
 
@@ -1115,9 +1177,9 @@ Removes an item owned by the current session.
 
 ---
 
-### 3.13 Table Payment Summary 🔒
+### 3.14 Table Payment Summary 🔒
 
-**GET** `/api/customer/table/order`
+**GET** `/api/customer/table/order/start`
 
 Returns a payment-ready snapshot of the authenticated customer's current table:
 - one node per active session at the same table (name, items, total)
@@ -1214,38 +1276,20 @@ Returns a payment-ready snapshot of the authenticated customer's current table:
 
 ---
 
-### 3.14 Pay Now (Create Pending Order) 🔒
+### 3.15 Create Order Draft 🔒
 
-**POST** `/api/customer/table/order`
+**POST** `/api/customer/table/order/draft`
 
-Creates a `pending` order for the authenticated customer based on the current table cart, optionally splitting selected items across N people. The order is created with `payment_pending = true` (no money is captured here — payment confirmation happens via a separate flow).
+Creates a `draft` order for the authenticated customer based on the customer's own cart items. Items are snapshotted at full prices (no splitting). The order is linked to the customer directly via `customer_id` (and also to the table session via `table_scan_session_id`).
 
 **Authentication:** required (Bearer token).
 
-**Body (all fields optional):**
+**Body:**
 ```json
-{
-  "shared_items": [
-    { "cart_item_id": 3, "shared_between": 3 },
-    { "cart_item_id": 7, "shared_between": 2 }
-  ]
-}
+{}
 ```
 
-**Validation:**
-- `shared_items`: optional array.
-- `shared_items.*.cart_item_id`: required integer. Must reference a cart item that belongs to **any** active session at the same table (own cart or someone else's).
-- `shared_items.*.shared_between`: required integer, `2`–`99`.
-
-**Total computation:**
-For each cart item across the table:
-- **Not shared** + mine → full `line_total` is added to my bill.
-- **Not shared** + someone else's → not on my bill.
-- **Shared** → `share = line_total / shared_between`:
-  - If the item is in **my** cart, I am billed only `share` (so `(N-1)/N` is removed from what I would have paid).
-  - If the item is in **someone else's** cart, I am billed `share` extra.
-
-`line_total = unit_price × quantity` (rounded to 2 decimals). `share` is also rounded to 2 decimals.
+No request body is required. The endpoint reads the customer's current cart automatically.
 
 **Response (201):**
 ```json
@@ -1253,7 +1297,8 @@ For each cart item across the table:
   "order": {
     "id": 101,
     "order_public_id": "ord-aB3xK9pQrS12",
-    "status": "pending",
+    "customer_id": 7,
+    "status": "draft",
     "payment_pending": true,
     "amount": 16.49,
     "currency": "EUR",
@@ -1266,10 +1311,83 @@ For each cart item across the table:
 ```
 
 **Notes:**
-- The order is linked to the customer via `table_scan_session_id` (the `orders` table no longer carries a direct `customer_id`).
-- The full per-line item snapshot and the split definitions are persisted on the order (`orders.items` and `orders.shared_items`) but are **not** returned by this endpoint — the response only exposes the totals.
-- `payment_pending = true` and `status = "pending"` until a separate payment-confirmation step updates them.
-- An empty body or omitted `shared_items` produces a non-split order (full prices for own items only).
+- `customer_id` is set to the authenticated customer's id.
+- The full per-line item snapshot is persisted on the order (`orders.items`) but is **not** returned by this endpoint — the response only exposes the totals.
+- `status = "draft"` indicates the order has not yet been submitted for payment. Use the Update Order endpoint to add shared items.
+
+**Response (422) — no active table session:**
+```json
+{ "message": "No active table session found." }
+```
+
+**Response (401):**
+```json
+{ "message": "Unauthenticated." }
+```
+
+---
+
+### 3.16 Update Order 🔒
+
+**PUT** `/api/customer/table/order/update`
+
+Updates an existing order owned by the authenticated customer. The order is matched by `id` + the authenticated customer's `customer_id`. The frontend may pass `items_count`, `items`, and/or `shared_items`. When `shared_items` is provided, each entry is validated (the cart_item_ids must belong to the same table; the shared_between_ids customers must also be at the same table).
+
+**Authentication:** required (Bearer token).
+
+**Body:**
+```json
+{
+  "id": 101,
+  "items_count": 3,
+  "items": [
+    { "cart_item_id": 1, "menu_item_id": 42, "name": "Fries", "quantity": 2, "unit_price": 3.50, "line_total": 7.00, "is_mine": true, "shared": false }
+  ],
+  "shared_items": [
+    { "cart_item_id": 3, "shared_between": 3, "shared_between_ids": [7, 8, 9] },
+    { "cart_item_id": 7, "shared_between": 2, "shared_between_ids": [7, 8] }
+  ]
+}
+```
+
+**Validation:**
+- `id`: required integer. Must reference an order owned by the authenticated customer.
+- `items_count`: optional integer (≥ 0).
+- `items`: optional array. Persisted as-is on `orders.items`.
+- `shared_items`: optional array. Persisted as-is on `orders.shared_items`.
+- `shared_items.*.cart_item_id`: required integer. Must reference a cart item at the same table.
+- `shared_items.*.shared_between`: required integer, `2`–`99`.
+- `shared_items.*.shared_between_ids`: optional array of integer **customer IDs**. Each ID must belong to a customer with an active session at the same table.
+
+**Notes:**
+- Only `items_count`, `items`, and `shared_items` are updatable through this endpoint. Other fields (status, amount, etc.) are not changeable here — `amount` is recomputed when the customer calls Confirm Order.
+- For an entry in `shared_items` to participate in the bill-split, it must include an `is_mine` flag (alongside `cart_item_id`, `line_total`, `shared_between`). The frontend can derive these from the items it sends.
+
+**Response (200):**
+```json
+{
+  "order": {
+    "id": 101,
+    "order_public_id": "ord-aB3xK9pQrS12",
+    "customer_id": 7,
+    "status": "draft",
+    "payment_pending": true,
+    "amount": 16.49,
+    "currency": "EUR",
+    "items_count": 3,
+    "items": [ ... ],
+    "shared_items": [ ... ],
+    "table_scan_session_id": 12,
+    "vendor_id": 1,
+    "updated_at": "2026-04-27T10:31:00+00:00"
+  }
+}
+```
+
+**Response (404) — order not found:**
+```json
+{ "message": "Order not found." }
+```
 
 **Response (422) — invalid shared cart item:**
 ```json
@@ -1279,9 +1397,69 @@ For each cart item across the table:
 }
 ```
 
+**Response (422) — invalid shared_between_ids:**
+```json
+{
+  "message": "One or more shared_between_ids customers are not at this table.",
+  "invalid_customer_ids": [42]
+}
+```
+
 **Response (422) — no active table session:**
 ```json
 { "message": "No active table session found." }
+```
+
+**Response (401):**
+```json
+{ "message": "Unauthenticated." }
+```
+
+---
+
+### 3.17 Create Order Confirmed 🔒
+
+**POST** `/api/customer/table/order/confirmed`
+
+Confirms the authenticated customer's most recent draft order. **No request body is accepted.** The endpoint reads the saved `items` and `shared_items` from the draft order, computes the final amount, and updates the order to `status = "confirmed"`.
+
+**Authentication:** required (Bearer token).
+
+**Body:**
+```json
+{}
+```
+
+**Total computation:**
+- Start with the sum of every `line_total` in the saved `items`.
+- For each entry in the saved `shared_items` with `shared_between = N` and `share = line_total / N`:
+  - If the item is in **my** cart (`is_mine = true`): subtract `(N − 1) × share` from my total — I keep paying only `1 share` instead of the full `line_total`.
+  - If the item is in **someone else's** cart (`is_mine = false`): add `1 × share` to my total — I owe my share for an item I didn't add to the cart.
+
+`share` is rounded to 2 decimals; the final amount is rounded to 2 decimals.
+
+**Response (200):**
+```json
+{
+  "order": {
+    "id": 101,
+    "order_public_id": "ord-aB3xK9pQrS12",
+    "customer_id": 7,
+    "status": "confirmed",
+    "payment_pending": true,
+    "amount": 12.99,
+    "currency": "EUR",
+    "items_count": 3,
+    "table_scan_session_id": 12,
+    "vendor_id": 1,
+    "created_at": "2026-04-27T10:30:00+00:00"
+  }
+}
+```
+
+**Response (404) — no draft order:**
+```json
+{ "message": "No draft order found." }
 ```
 
 **Response (401):**
@@ -1332,13 +1510,9 @@ Returns the full history view of the customer's currently active table — table
       "total_amount": 16.49,
       "orders": [
         {
-          "id": 101,
           "order_public_id": "ord-aB3xK9pQrS12",
+          "vendor_id": 1,
           "status": "pending",
-          "payment_pending": true,
-          "payment_received": false,
-          "amount": 16.49,
-          "currency": "EUR",
           "items_count": 3,
           "items": [
             {
@@ -1380,9 +1554,31 @@ Returns the full history view of the customer's currently active table — table
               "is_mine": false
             }
           ],
+          "amount": "16.49",
+          "currency": "EUR",
+          "payment_method": null,
+          "transaction_id": null,
+          "payment_pending": true,
+          "payment_received": false,
+          "payment_confirmed_at": null,
+          "payment_note": null,
+          "ready_at": null,
+          "picked_up_at": null,
+          "order_number": null,
           "order_type": "dine-in",
+          "table_number": "3",
+          "service_fee": "0.00",
+          "vat_amount": "0.00",
+          "course": null,
+          "guest_count": null,
+          "served_at": null,
+          "cancelled_at": null,
+          "cancelled_reason": null,
           "table_scan_session_id": 12,
-          "created_at": "2026-04-27T10:30:00+00:00"
+          "waiter_confirmed": false,
+          "waiter_confirmed_at": null,
+          "created_at": "2026-04-27T10:30:00.000000Z",
+          "updated_at": "2026-04-27T10:30:00.000000Z"
         }
       ]
     }
@@ -1397,7 +1593,7 @@ Returns the full history view of the customer's currently active table — table
 **Notes:**
 - The current table is derived from the customer's active `table_scan_sessions` row — no `table_id` needs to be passed.
 - `people[]` always contains exactly **one** entry — the authenticated customer's own active session (`is_me: true`). Other people sitting at the same table are intentionally excluded.
-- `orders[]` is the **full, unedited** snapshot persisted on the `orders` row at pay-now time, including the per-line `items` array and the `shared_items` split definitions.
+- `orders[]` is the **full `orders` table row** for each order (every column the model exposes), with `id` removed. This includes the per-line `items` array and the `shared_items` split definitions persisted at pay-now time.
 - `total_amount` is the sum of `amount` across the customer's orders. `summary.total_amount` mirrors it.
 - `name` falls back to `"Guest"` if the customer has no name set.
 
@@ -1457,6 +1653,11 @@ Returns the full history view of the customer's currently active table — table
 **POST** `/api/customer/reservations/{reservationPublicId}/cancel`
 
 Cancels a `pending` or `confirmed` reservation.
+
+**Body:**
+```json
+{}
+```
 
 ---
 
@@ -1541,6 +1742,11 @@ Adds the given restaurant to the authenticated customer's favorites. The restaur
 **Path Parameters:**
 - `vendorPublicId` — the restaurant's `vendor_public_id` (e.g. `V-ABC123`).
 
+**Body:**
+```json
+{}
+```
+
 **Response (201):**
 ```json
 { "message": "Restaurant added to favorites." }
@@ -1563,6 +1769,11 @@ Removes the given restaurant from the authenticated customer's favorites.
 
 **Path Parameters:**
 - `vendorPublicId` — the restaurant's `vendor_public_id`.
+
+**Body:**
+```json
+{}
+```
 
 **Response (200):**
 ```json
@@ -1625,6 +1836,11 @@ Removes the given restaurant from the authenticated customer's favorites.
 
 **DELETE** `/api/customer/reviews/{reviewPublicId}`
 
+**Body:**
+```json
+{}
+```
+
 ---
 
 ## 9. Privacy & Data 🔒
@@ -1634,6 +1850,11 @@ Removes the given restaurant from the authenticated customer's favorites.
 **POST** `/api/customer/privacy/export`
 
 Submits a GDPR data export request. Customer will receive a download link via email.
+
+**Body:**
+```json
+{}
+```
 
 **Response (201):**
 ```json
