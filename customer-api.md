@@ -1329,16 +1329,18 @@ No request body is required. The endpoint reads the customer's current cart auto
 
 ### 3.16 Update Order 🔒
 
-**PUT** `/api/customer/table/order/update`
+**PUT** `/api/customer/table/order/update/{order_id}`
 
-Updates an existing order owned by the authenticated customer. The order is matched by `id` + the authenticated customer's `customer_id`. The frontend may pass `items_count`, `items`, and/or `shared_items`. When `shared_items` is provided, each entry is validated (the cart_item_ids must belong to the same table; the shared_between_ids customers must also be at the same table).
+Updates an existing order owned by the authenticated customer. The order is matched by the `{order_id}` path parameter + the authenticated customer's `customer_id`. The body is fully optional — the frontend may pass any combination of `items_count`, `items`, and/or `shared_items`. When `shared_items` is provided, each entry is validated (the cart_item_ids must belong to the same table; the shared_between_ids customers must also be at the same table).
 
 **Authentication:** required (Bearer token).
 
-**Body:**
+**Path parameters:**
+- `order_id`: integer. ID of the order to update. Must reference an order owned by the authenticated customer.
+
+**Body (all fields optional):**
 ```json
 {
-  "id": 101,
   "items_count": 3,
   "items": [
     { "cart_item_id": 1, "menu_item_id": 42, "name": "Fries", "quantity": 2, "unit_price": 3.50, "line_total": 7.00, "is_mine": true, "shared": false }
@@ -1351,12 +1353,11 @@ Updates an existing order owned by the authenticated customer. The order is matc
 ```
 
 **Validation:**
-- `id`: required integer. Must reference an order owned by the authenticated customer.
 - `items_count`: optional integer (≥ 0).
 - `items`: optional array. Persisted as-is on `orders.items`.
 - `shared_items`: optional array. Persisted as-is on `orders.shared_items`.
-- `shared_items.*.cart_item_id`: required integer. Must reference a cart item at the same table.
-- `shared_items.*.shared_between`: required integer, `2`–`99`.
+- `shared_items.*.cart_item_id`: required integer (when `shared_items` is provided). Must reference a cart item at the same table.
+- `shared_items.*.shared_between`: required integer (when `shared_items` is provided), `2`–`99`.
 - `shared_items.*.shared_between_ids`: optional array of integer **customer IDs**. Each ID must belong to a customer with an active session at the same table.
 
 **Notes:**
