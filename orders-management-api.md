@@ -215,7 +215,7 @@ Records that cash payment has been received. Sets `paymentReceived → true`, `p
 
 ### `PATCH /api/orders/{orderId}/ready`
 
-Marks the order as ready for pickup or serving. Sets `status → ready` and records `readyAt`.
+Marks the order as ready for pickup or serving. Sets `status → ready` and stamps `cart_items.ready_at = now()` on every cart_item linked to this order (owned by the order's session, plus any cart_item whose `order_ids` JSON contains the order's id). The order-level `readyAt` returned in the response is the latest such timestamp once *every* linked cart_item has been marked ready; otherwise `null`.
 
 **Request Body:** none
 
@@ -227,7 +227,7 @@ Marks the order as ready for pickup or serving. Sets `status → ready` and reco
 
 ### `PATCH /api/orders/{orderId}/picked-up`
 
-Marks a takeaway order as collected. Sets `status → picked_up` and records `pickedUpAt`.
+Marks a takeaway order as collected. Sets `status → picked_up`. (No timestamp is recorded — pickup is reflected by the status alone.)
 
 **Request Body:** none
 
@@ -330,7 +330,6 @@ Closes the table session at the end of a visit. Sets `status → closed` and rec
   "tableNumber": "3",
   "tableSessionId": "1",
   "course": "mains",
-  "guestCount": 2,
   "waiterConfirmed": true,
   "waiterConfirmedAt": "2026-03-29T12:05:00.000Z",
   "customer": {
@@ -342,7 +341,20 @@ Closes the table session at the end of a visit. Sets `status → closed` and rec
   "status": "preparing",
   "itemsCount": 3,
   "items": [
-    { "name": "Schnitzel", "qty": 1, "price": 18.50 }
+    {
+      "cartItemId": 17,
+      "menuItemId": 42,
+      "name": "Schnitzel",
+      "imageUrl": null,
+      "quantity": 1,
+      "notes": null,
+      "unitPrice": 18.50,
+      "lineTotal": 18.50,
+      "sharedBetween": 1,
+      "sharedWithOrderIds": [],
+      "preparingStartAt": null,
+      "readyAt": null
+    }
   ],
   "amount": 18.50,
   "serviceFee": 1.50,
@@ -354,7 +366,6 @@ Closes the table session at the end of a visit. Sets `status → closed` and rec
   "paymentConfirmedAt": "2026-03-29T12:10:00.000Z",
   "paymentNote": null,
   "readyAt": null,
-  "pickedUpAt": null,
   "servedAt": null,
   "cancelledAt": null,
   "cancelledReason": null,
@@ -362,6 +373,12 @@ Closes the table session at the end of a visit. Sets `status → closed` and rec
   "updatedAt": "2026-03-29T12:05:00.000Z"
 }
 ```
+
+**Notes:**
+- `itemsCount` is computed live as the sum of `quantity` across linked cart_items.
+- `items[]` is built live from `cart_items` (owned by the order's session, plus any cart_item whose `order_ids` JSON contains the order id).
+- `readyAt` reflects the order-level rollup (latest timestamp once *all* linked cart_items have `ready_at` set). The per-item `readyAt` is the canonical value.
+- `pickedUpAt` and `guestCount` are no longer returned — both columns were dropped from `orders`.
 
 ### Session Object
 
