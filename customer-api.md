@@ -1399,7 +1399,7 @@ The final amount is rounded to 2 decimals.
 
 **GET** `/api/customer/table/history`
 
-Returns the unified table-view payload — table + vendor + session metadata, every active session at the same table, and every order each person has placed (with per-item bill-split detail derived live from `cart_items`).
+Returns the unified table-view payload — table + vendor + session metadata, every active session at the same table, and the latest order each person has placed (with per-item bill-split detail derived live from `cart_items`). Each person returns a single `order` object (the most recent order matching that session and table), or `null` if no order exists.
 
 This is the **canonical "table view" response** — it is also returned (with the same shape) by [§3.15](#315-create-order-draft-), [§3.16](#316-update-order-), and [§3.17](#317-create-order-confirmed-).
 
@@ -1434,71 +1434,69 @@ This is the **canonical "table view" response** — it is also returned (with th
       "status": "active",
       "orders_count": 1,
       "total_amount": 16.49,
-      "orders": [
-        {
-          "id": 42,
-          "order_public_id": "ord-aB3xK9pQrS12",
-          "customer_id": 7,
-          "vendor_id": 1,
-          "table_scan_session_id": 12,
-          "status": "confirmed",
-          "amount": 16.49,
-          "currency": "EUR",
-          "order_number": null,
-          "order_type": "dine-in",
-          "table_number": "3",
-          "service_fee": 0.00,
-          "vat_amount": 0.00,
-          "course": null,
-          "payment_method": null,
-          "payment_pending": true,
-          "payment_received": false,
-          "payment_confirmed_at": null,
-          "payment_note": null,
-          "transaction_id": null,
-          "served_at": null,
-          "cancelled_at": null,
-          "cancelled_reason": null,
-          "waiter_confirmed": false,
-          "waiter_confirmed_at": null,
-          "created_at": "2026-04-27T10:30:00+00:00",
-          "updated_at": "2026-04-27T10:31:00+00:00",
-          "items": [
-            {
-              "cart_item_id": 1,
-              "menu_item_id": 42,
-              "name": "Fries",
-              "image_url": null,
-              "quantity": 2,
-              "unit_price": 3.50,
-              "line_total": 7.00,
-              "is_mine": true,
-              "shared_between": 1,
-              "shared_with": [],
-              "my_share": 7.00,
-              "preparing_start_at": null,
-              "ready_at": null
-            },
-            {
-              "cart_item_id": 3,
-              "menu_item_id": 51,
-              "name": "Pizza",
-              "image_url": null,
-              "quantity": 1,
-              "unit_price": 18.99,
-              "line_total": 18.99,
-              "is_mine": false,
-              "shared_between": 2,
-              "shared_with": [
-                { "order_id": 101, "customer_id": 9, "customer_name": "Bob Jones" }
-              ],
-              "my_share": 9.50,
-              "preparing_start_at": null,
-              "ready_at": null
-            }
-          ]
-        }
-      ]
+      "order": {
+        "id": 42,
+        "order_public_id": "ord-aB3xK9pQrS12",
+        "customer_id": 7,
+        "vendor_id": 1,
+        "table_scan_session_id": 12,
+        "status": "confirmed",
+        "amount": 16.49,
+        "currency": "EUR",
+        "order_number": null,
+        "order_type": "dine-in",
+        "table_number": "3",
+        "service_fee": 0.00,
+        "vat_amount": 0.00,
+        "course": null,
+        "payment_method": null,
+        "payment_pending": true,
+        "payment_received": false,
+        "payment_confirmed_at": null,
+        "payment_note": null,
+        "transaction_id": null,
+        "served_at": null,
+        "cancelled_at": null,
+        "cancelled_reason": null,
+        "waiter_confirmed": false,
+        "waiter_confirmed_at": null,
+        "created_at": "2026-04-27T10:30:00+00:00",
+        "updated_at": "2026-04-27T10:31:00+00:00",
+        "items": [
+          {
+            "cart_item_id": 1,
+            "menu_item_id": 42,
+            "name": "Fries",
+            "image_url": null,
+            "quantity": 2,
+            "unit_price": 3.50,
+            "line_total": 7.00,
+            "is_mine": true,
+            "shared_between": 1,
+            "shared_with": [],
+            "my_share": 7.00,
+            "preparing_start_at": null,
+            "ready_at": null
+          },
+          {
+            "cart_item_id": 3,
+            "menu_item_id": 51,
+            "name": "Pizza",
+            "image_url": null,
+            "quantity": 1,
+            "unit_price": 18.99,
+            "line_total": 18.99,
+            "is_mine": false,
+            "shared_between": 2,
+            "shared_with": [
+              { "order_id": 101, "customer_id": 9, "customer_name": "Bob Jones" }
+            ],
+            "my_share": 9.50,
+            "preparing_start_at": null,
+            "ready_at": null
+          }
+        ]
+      }
     }
   ],
   "summary": {
