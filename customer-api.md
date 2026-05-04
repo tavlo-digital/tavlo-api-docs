@@ -1309,31 +1309,39 @@ No request body is required.
 
 **PUT** `/api/customer/table/order/update/{order_id}`
 
-Adds the caller's order to the share list of *another* customer's `cart_item`. The caller's `order_id` is appended to that `cart_item.order_ids` JSON array (deduplicated). When the order is later confirmed, every `cart_item` whose `order_ids` contains this order's id contributes a share to the amount.
+Share or unshare a `cart_item` for the caller's draft order. At least one of `shared_item` or `unshared_item` must be provided; both may be sent together.
 
 **Authentication:** required (Bearer token).
 
 **Path parameters:**
-- `order_id`: integer. ID of the order to update. Must reference a draft order owned by the authenticated customer.
+- `order_id`: integer. ID of the order to update. Must belong to the authenticated customer.
 
 **Body:**
 ```json
 {
-  "shared_item": 3
+  "shared_item": 3,
+  "unshared_item": 5
 }
 ```
 
 **Validation:**
-- `shared_item`: required integer. ID of a `cart_item` belonging to **another** customer at the same table. The cart_item's `table_scan_session_id` must reference an active session at the caller's table, and must not equal the caller's own session.
+- `shared_item`: nullable integer. ID of a `cart_item` belonging to **another** customer at the same table. The caller's `order_id` is appended to that cart_item's `order_ids` array (deduplicated). When the order is confirmed, this item contributes a share to the total amount.
+- `unshared_item`: nullable integer. ID of a `cart_item` at the same table. The caller's `order_id` is removed from that cart_item's `order_ids` array. If the caller was not sharing this item, the operation is a silent no-op.
+- At least one of `shared_item` or `unshared_item` must be present.
 
-**Response (200):** unified table-view payload — see [§4.1 Get Current Table History](#41-get-current-table-history) for the full shape. The shared `cart_item` will now appear in the caller's order's `items[]` with `is_mine: false` and an `my_share` reflecting the new split.
+**Response (200):** unified table-view payload — see [§4.1 Get Current Table History](#41-get-current-table-history) for the full shape.
 
 **Response (404) — order not found:**
 ```json
 { "message": "Order not found." }
 ```
 
-**Response (422) — cart item not at this table:**
+**Response (422) — neither field provided:**
+```json
+{ "message": "Provide shared_item or unshared_item." }
+```
+
+**Response (422) — shared cart item not at this table:**
 ```json
 { "message": "Shared cart item does not belong to this table." }
 ```
@@ -1341,6 +1349,11 @@ Adds the caller's order to the share list of *another* customer's `cart_item`. T
 **Response (422) — caller tried to share their own cart item:**
 ```json
 { "message": "You cannot share your own cart item with yourself." }
+```
+
+**Response (422) — unshared cart item not at this table:**
+```json
+{ "message": "Unshared cart item does not belong to this table." }
 ```
 
 **Response (422) — no active table session:**
