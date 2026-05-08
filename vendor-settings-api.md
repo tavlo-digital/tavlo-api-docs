@@ -2,7 +2,7 @@
 
 Base URL: `https://your-domain.com/api`
 
-All endpoints require authentication via `Authorization: Bearer {token}` with a valid vendor Sanctum token.
+Authenticated endpoints require `Authorization: Bearer {token}`. Owner/vendor accounts receive full manager access. Staff accounts are stored in `team_members`, use the same `/api/vendor/login` endpoint, and are restricted to their role pages/actions.
 
 ---
 
@@ -402,6 +402,248 @@ When not connected:
 {
   "connected": false,
   "onboardingComplete": false
+}
+```
+
+---
+
+## 12. Vendor Login and Current User Shape
+
+### `POST /vendor/login`
+
+**Auth:** Public.
+
+Logs in either the vendor owner/manager or an active invited team member.
+
+### Request Body
+```json
+{
+  "email": "owner@example.com",
+  "password": "password123"
+}
+```
+
+### Response `200 OK` — owner/manager
+```json
+{
+  "user": {
+    "id": 1,
+    "vendorId": "1",
+    "vendorPublicId": "V-ABC12345",
+    "vendor_public_id": "V-ABC12345",
+    "actorType": "vendor",
+    "role": "manager",
+    "name": "Owner Name",
+    "restaurantName": "My Restaurant",
+    "country": "Austria",
+    "phone": "+43 1 2345678",
+    "email": "owner@example.com",
+    "permissions": ["*"],
+    "created_at": "2026-05-08T10:00:00.000Z"
+  },
+  "token": "plain-text-sanctum-token"
+}
+```
+
+### Response `200 OK` — staff
+```json
+{
+  "user": {
+    "id": 12,
+    "vendorId": "1",
+    "vendorPublicId": "V-ABC12345",
+    "vendor_public_id": "V-ABC12345",
+    "actorType": "team_member",
+    "role": "kitchen",
+    "name": "Kitchen Staff",
+    "restaurantName": "My Restaurant",
+    "country": "Austria",
+    "phone": null,
+    "email": "kitchen@example.com",
+    "permissions": ["orders.view", "orders.manage", "orders.kitchen"],
+    "created_at": "2026-05-08T10:00:00.000Z"
+  },
+  "token": "plain-text-sanctum-token"
+}
+```
+
+Staff token abilities include `role:team_member` and `role:{role}`. Owner tokens include `role:vendor` and `role:manager`.
+
+### `GET /vendor/me`
+
+**Auth:** Vendor owner or active team member.
+
+Returns the current user under a `data` key using the same shape shown above.
+
+### Response `200 OK`
+```json
+{
+  "data": {
+    "actorType": "team_member",
+    "role": "waiter",
+    "vendorId": "1",
+    "email": "waiter@example.com",
+    "permissions": ["orders.view", "orders.manage", "tables.close"]
+  }
+}
+```
+
+---
+
+## 13. Team Access
+
+Team management endpoints are owner/manager-only. Staff users cannot call them. The vendor owner is not stored as a `team_members` record; the frontend displays the owner as **Manager / full access** from the logged-in vendor user.
+
+Allowed invite roles are static: `kitchen` and `waiter`.
+
+### List Team Members
+
+**`GET /vendor/{vendorId}/team`**
+
+**Auth:** Vendor owner/manager only.
+
+### Response `200 OK`
+```json
+[
+  {
+    "id": "12",
+    "name": "Kitchen Staff",
+    "email": "kitchen@example.com",
+    "role": "kitchen",
+    "permissions": ["orders.view", "orders.manage", "orders.kitchen"],
+    "status": "invited",
+    "invitedAt": "2026-05-08T10:00:00.000Z",
+    "joinedAt": null
+  }
+]
+```
+
+### Invite Team Member
+
+**`POST /vendor/{vendorId}/team/invite`**
+
+**Auth:** Vendor owner/manager only.
+
+Sends an invitation email. The email must not already exist in `vendors.email` or `team_members.email`.
+
+### Request Body
+```json
+{
+  "email": "waiter@example.com",
+  "role": "waiter"
+}
+```
+
+### Response `201 Created`
+```json
+{
+  "id": "13",
+  "name": "Waiter",
+  "email": "waiter@example.com",
+  "role": "waiter",
+  "permissions": ["orders.view", "orders.manage", "tables.close"],
+  "status": "invited",
+  "invitedAt": "2026-05-08T10:00:00.000Z",
+  "joinedAt": null
+}
+```
+
+### Error Responses
+- `422` — email belongs to a vendor account: `"This email already belongs to a vendor account."`
+- `422` — email already belongs to a team member: `"A team member with this email already exists."`
+- `422` — role is not `kitchen` or `waiter`
+
+### Get Invitation
+
+**`GET /vendor/team/invitations/{token}`**
+
+**Auth:** Public.
+
+### Response `200 OK`
+```json
+{
+  "email": "waiter@example.com",
+  "role": "waiter",
+  "status": "invited",
+  "vendorId": "1",
+  "vendorName": "My Restaurant"
+}
+```
+
+### Accept Invitation
+
+**`POST /vendor/team/invitations/{token}/accept`**
+
+**Auth:** Public.
+
+Creates the staff password, activates the member, clears the invitation token, and allows login through `/vendor/login`.
+
+### Request Body
+```json
+{
+  "password": "new-password",
+  "password_confirmation": "new-password"
+}
+```
+
+### Response `200 OK`
+```json
+{
+  "message": "Invitation accepted. You can now sign in.",
+  "member": {
+    "email": "waiter@example.com",
+    "role": "waiter",
+    "status": "active",
+    "vendorId": "1",
+    "vendorName": "My Restaurant"
+  }
+}
+```
+
+### Resend Invitation
+
+**`POST /vendor/{vendorId}/team/{memberId}/resend`**
+
+**Auth:** Vendor owner/manager only.
+
+Regenerates the invitation token and sends a new invitation email. Only `invited` members can be resent.
+
+### Request Body
+None.
+
+### Response `200 OK`
+Returns the updated team member object.
+
+### Update Team Member
+
+**`PATCH /vendor/{vendorId}/team/{memberId}`**
+
+**Auth:** Vendor owner/manager only.
+
+### Request Body
+```json
+{
+  "name": "Front Waiter",
+  "role": "waiter",
+  "status": "active"
+}
+```
+
+Allowed `role`: `kitchen`, `waiter`. Allowed `status`: `invited`, `active`, `suspended`.
+
+### Response `200 OK`
+Returns the updated team member object.
+
+### Delete Team Member
+
+**`DELETE /vendor/{vendorId}/team/{memberId}`**
+
+**Auth:** Vendor owner/manager only.
+
+### Response `200 OK`
+```json
+{
+  "message": "Team member removed"
 }
 ```
 

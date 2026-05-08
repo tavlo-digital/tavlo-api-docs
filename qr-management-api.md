@@ -17,8 +17,9 @@ Endpoints marked **Public** do not require authentication — they are called by
 4. [Takeaway QR Code](#4-takeaway-qr-code)
 5. [Takeaway Scan (Public)](#5-takeaway-scan-public)
 6. [Sync Tables](#6-sync-tables)
-7. [Table Status Logic](#7-table-status-logic)
-8. [Error Reference](#8-error-reference)
+7. [Close Active Table Sessions](#7-close-active-table-sessions)
+8. [Table Status Logic](#8-table-status-logic)
+9. [Error Reference](#9-error-reference)
 
 ---
 
@@ -258,24 +259,91 @@ Synchronises the number of tables to match a desired count. Useful when a vendor
 
 ---
 
-## 7. Table Status Logic
+## 7. Close Active Table Sessions
+
+### POST `/api/vendor/{vendorId}/tables/{tableId}/close-session`
+
+Closes all active `table_scan_sessions` for one restaurant table. This is the waiter close-table action used after a table visit ends.
+
+**Auth:** Vendor owner/manager or active `waiter` staff token. Other staff roles receive `403`.
+
+**Request:**
+```json
+{
+  "force": true
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `force` | boolean | ❌ | Required only after a `409` unpaid-balance warning if the waiter confirms closing anyway |
+
+**Response `200`:**
+```json
+{
+  "message": "Table session closed",
+  "table": {
+    "id": "3",
+    "number": 3,
+    "name": "Table 3",
+    "qrToken": "550e8400-e29b-41d4-a716-446655440000",
+    "isActive": true,
+    "status": "idle",
+    "qrCreatedAt": "2026-03-29T10:00:00.000Z",
+    "lastScannedAt": "2026-05-08T12:00:00.000Z"
+  },
+  "closedSessionIds": ["18", "19"],
+  "paymentSummary": {
+    "totalAmount": 46,
+    "paidAmount": 46,
+    "remainingAmount": 0,
+    "cashPendingOrders": 0,
+    "ordersCount": 2
+  }
+}
+```
+
+**Response `409` unpaid balance:**
+```json
+{
+  "message": "This table still has unpaid balances.",
+  "paymentSummary": {
+    "totalAmount": 46,
+    "paidAmount": 20,
+    "remainingAmount": 26,
+    "cashPendingOrders": 1,
+    "ordersCount": 2
+  }
+}
+```
+
+After showing the warning to the waiter, call the same endpoint with `{ "force": true }` to close anyway.
+
+**Error Responses:**
+- `403` — authenticated staff role cannot close tables, or vendor/table mismatch
+- `404` — table has no active scan session
+- `422` — invalid `force` value
+
+---
+
+## 8. Table Status Logic
 
 Status is **computed dynamically** on every `GET /tables` request — it is never stored in the database.
 
 ```
-IF any order for this table has status IN (pending, confirmed, preparing, ready)
-    → status = "active"   (yellow)
-ELSE IF any order for this table has status = "served" AND payment_pending = true
+IF any active table_scan_sessions for this restaurant_table_id have unpaid orders
     → status = "waiting_payment"   (red)
+ELSE IF any active table_scan_sessions exist for this restaurant_table_id
+    → status = "active"   (yellow)
 ELSE
     → status = "idle"   (green)
 ```
 
-The `table_number` field on the `orders` table is used for matching (string comparison). Two SQL queries load all active and unpaid table numbers for the vendor in bulk — there is no N+1 query.
+The lookup is based on `table_scan_sessions.restaurant_table_id`, joined to `orders.table_scan_session_id` for unpaid state. It no longer depends on the stale `orders.table_session_id` or string matching through `orders.table_number`.
 
 ---
 
-## 8. Error Reference
+## 9. Error Reference
 
 | HTTP Status | Meaning |
 |---|---|
@@ -284,7 +352,7 @@ The `table_number` field on the `orders` table is used for matching (string comp
 | `401` | Missing or invalid authentication token |
 | `403` | Token belongs to a different vendor |
 | `404` | Table or vendor not found |
-| `409` | Conflict — table has active orders, cannot delete |
+| `409` | Conflict — table has active orders and cannot be deleted, or close-session found unpaid balances |
 | `410` | QR token is stale / no longer valid |
 | `422` | Validation failed (see `errors` in response body) |
 
@@ -305,3 +373,4 @@ The `table_number` field on the `orders` table is used for matching (string comp
 | `POST` | `/api/vendor/{vendorId}/tables/takeaway-qr/refresh` | ✅ | Regenerate takeaway QR token |
 | `POST` | `/api/vendor/{vendorId}/takeaway/scan` | 🔓 Public | Record takeaway QR scan |
 | `POST` | `/api/vendor/{vendorId}/tables/sync` | ✅ | Sync table count to desired number |
+| `POST` | `/api/vendor/{vendorId}/tables/{tableId}/close-session` | ✅ Waiter/owner | Close active table scan sessions |

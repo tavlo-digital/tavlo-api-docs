@@ -1077,7 +1077,7 @@ with HTTP `422`.
 
 **GET** `/api/customer/cart`
 
-Returns all items per person at the same table.
+Returns all items per person at the same table. Only cart items that have **not** been attached to any order are included — items whose `order_ids` array is non-empty are excluded from this response (they appear in the order/history endpoints instead).
 
 **Response (200):**
 ```json
@@ -1121,7 +1121,7 @@ Returns all items per person at the same table.
 
 **POST** `/api/customer/cart/items`
 
-Adds an item to the authenticated customer's cart.
+Adds an item to the authenticated customer's cart. If the same `menu_item_id` already exists in the customer's current session, the quantity is incremented instead of creating a duplicate entry.
 
 **Body:**
 ```json
@@ -1136,6 +1136,10 @@ Adds an item to the authenticated customer's cart.
 - `menu_item_id`: required, must exist in `menu_items`
 - `quantity`: optional, integer, 1–99 (default `1`)
 - `notes`: optional, string, max 500
+
+**Behavior:**
+- If a cart item with the same `menu_item_id` already exists for the customer's active `table_scan_session`, the existing item's quantity is incremented by the requested amount (default `1`). The existing item is returned.
+- If no matching cart item exists, a new one is created.
 
 **Response (201):**
 ```json
@@ -1488,8 +1492,10 @@ This is the **canonical "table view" response** — it is also returned (with th
             "shared_between": 1,
             "shared_with": [],
             "my_share": 7.00,
-            "preparing_start_at": null,
-            "ready_at": null
+            "status": "Preparing",
+            "preparing_start_at": "2026-04-27T10:31:00+00:00",
+            "ready_at": null,
+            "served_at": null
           },
           {
             "cart_item_id": 3,
@@ -1505,8 +1511,10 @@ This is the **canonical "table view" response** — it is also returned (with th
               { "order_id": 101, "customer_id": 9, "customer_name": "Bob Jones" }
             ],
             "my_share": 9.50,
-            "preparing_start_at": null,
-            "ready_at": null
+            "status": "Ready",
+            "preparing_start_at": "2026-04-27T10:32:00+00:00",
+            "ready_at": "2026-04-27T10:42:00+00:00",
+            "served_at": null
           }
         ]
       }
@@ -1533,7 +1541,8 @@ This is the **canonical "table view" response** — it is also returned (with th
 | `shared_between` | int | `1 + count(order_ids)`. The number of orders splitting this item (owner + sharers). |
 | `shared_with` | object[] | The orders that share this item with the owner. Each entry: `order_id`, `customer_id`, `customer_name`. Empty array if unshared. |
 | `my_share` | float | `line_total / shared_between` — what each participating order contributes. |
-| `preparing_start_at`, `ready_at` | ISO8601\|null | Per-item preparation timestamps (set by the vendor flow). |
+| `status` | string\|null | Per-item status derived from timestamps: `Served` when `served_at` is set, `Ready` when `ready_at` is set, `Preparing` when `preparing_start_at` is set, otherwise `null`. |
+| `preparing_start_at`, `ready_at`, `served_at` | ISO8601\|null | Per-item preparation/service timestamps (set by the vendor flow). |
 
 **Item-set rule for an order:**
 For a given order `O` in the response, an item appears in its `items[]` if either:
@@ -1541,7 +1550,7 @@ For a given order `O` in the response, an item appears in its `items[]` if eithe
 - (b) the cart_item's `order_ids` contains `O.id` (shared-into).
 
 **Notes:**
-- The columns `items_count`, `items`, `shared_items`, `ready_at`, `picked_up_at`, and `guest_count` no longer exist on `orders`. Per-item state lives on `cart_items` (`order_ids`, `preparing_start_at`, `ready_at`); per-order amount is recomputed live on confirm.
+- The columns `items_count`, `items`, `shared_items`, `ready_at`, `picked_up_at`, and `guest_count` no longer exist on `orders`. Per-item state lives on `cart_items` (`order_ids`, `preparing_start_at`, `ready_at`, `served_at`); per-order amount is recomputed live on confirm.
 - `name` falls back to `"Guest"` if the customer has no name set.
 
 **Response (422) — no active table session:**
@@ -1553,6 +1562,291 @@ For a given order `O` in the response, an item appears in its `items[]` if eithe
 ```json
 { "message": "Unauthenticated." }
 ```
+
+---
+
+### 4.2 Customer Account Order History
+
+**GET** `/api/customer/orders/history`
+
+Returns the authenticated customer's account-level order history grouped by restaurant. Unlike [§4.1](#41-get-current-table-history), this endpoint is not scoped to the currently active table session; it is for the customer's full past order history.
+
+**Authentication:** required (Bearer token).
+
+**Query Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `page` | int | Orders page number (default: `1`). |
+| `per_page` | int | Orders per restaurant group (default: `10`, max: `50`). |
+
+**Pagination:** `history[].orders` is paginated per restaurant group. The top-level summary always reflects the full matching history, not only the current page.
+
+**Response (200):**
+```json
+{
+  "history": [
+    {
+      "restaurant_public_id": "REST-101",
+      "restaurant_name": "Bella Italia",
+      "restaurant_logo_url": "https://example.com/media/vendors/1/logo.png",
+      "currency": "USD",
+      "orders_count": 10,
+      "total_spent": 240.0,
+      "last_ordered_at": "2024-10-10T10:30:00Z",
+      "orders": [
+        {
+          "order_id": "ORD-8801",
+          "order_public_id": "ord-aB3xK9pQrS12",
+          "created_at": "2024-10-10T10:30:00Z",
+          "order_type": "dine-in",
+          "payment_status": "paid",
+          "payment_method": "card",
+          "items_count": 2,
+          "subtotal": 20.24,
+          "vat": 4.0,
+          "service_fee": 0.0,
+          "total_amount": 24.24,
+          "items": [
+            {
+              "id": 42,
+              "menu_item_id": 42,
+              "name": "Tonkotsu Ramen",
+              "quantity": 1,
+              "unit_price": 16.24,
+              "line_total": 16.24,
+              "image_url": "https://example.com/media/menu-items/42/photo.png",
+              "notes": null
+            },
+            {
+              "id": 57,
+              "menu_item_id": 57,
+              "name": "Matcha Latte",
+              "quantity": 1,
+              "unit_price": 8.0,
+              "line_total": 8.0,
+              "image_url": null,
+              "notes": null
+            }
+          ]
+        }
+      ],
+      "pagination": {
+        "current_page": 1,
+        "per_page": 10,
+        "total": 10,
+        "last_page": 1,
+        "has_more": false
+      }
+    }
+  ],
+  "summary": {
+    "restaurants_count": 1,
+    "orders_count": 10,
+    "total_spent": 240.0
+  }
+}
+```
+
+**Response (401):**
+```json
+{ "message": "Unauthenticated." }
+```
+
+---
+
+### 4.3 Customer Order Detail
+
+**GET** `/api/customer/orders/{orderPublicId}`
+
+Returns one order detail for the authenticated customer.
+
+**Authentication:** required (Bearer token).
+
+**Payment methods:** `card`, `stripe`, `cash`.
+
+**Response (200):**
+```json
+{
+  "order_id": "ORD-8842",
+  "order_public_id": "ord-aB3xK9pQrS12",
+  "restaurant": {
+    "restaurant_public_id": "REST-101",
+    "restaurant_name": "Bella Italia",
+    "logo_url": "https://example.com/media/vendors/1/logo.png"
+  },
+  "created_at": "2024-02-24T10:30:00Z",
+  "status": "delivered",
+  "order_type": "dine-in",
+  "payment_status": "paid",
+  "payment_method": "card",
+  "items": [
+    {
+      "menu_item_id": 42,
+      "name": "Tonkotsu Ramen",
+      "quantity": 1,
+      "unit_price": 16.24,
+      "line_total": 16.24,
+      "image_url": null,
+      "notes": null
+    },
+    {
+      "menu_item_id": 57,
+      "name": "Matcha Latte",
+      "quantity": 1,
+      "unit_price": 8.0,
+      "line_total": 8.0,
+      "image_url": null,
+      "notes": null
+    }
+  ],
+  "totals": {
+    "subtotal": 20.24,
+    "vat": 4.0,
+    "service_fee": 0.0,
+    "total": 24.24,
+    "currency": "USD"
+  }
+}
+```
+
+**Response (404):**
+```json
+{ "message": "No query results for model [App\\Models\\Order]." }
+```
+
+**Response (401):**
+```json
+{ "message": "Unauthenticated." }
+```
+
+---
+
+### 4.4 Create Stripe Payment Intent
+
+**POST** `/api/customer/payments/create-intent`
+
+Creates a Stripe PaymentIntent for the authenticated customer's order. This endpoint is for Stripe Elements / PaymentElement; the frontend stays in the app and uses the returned `clientSecret`.
+
+**Authentication:** required (Bearer token).
+
+**Body:**
+```json
+{
+  "orderId": "ord-aB3xK9pQrS12",
+  "userId": "7",
+  "customerId": "7"
+}
+```
+
+`userId` and `customerId` are optional compatibility fields. If sent, they must match the authenticated customer; the backend never trusts them as the source of identity.
+
+**Backend behavior:**
+- Resolves `orderId` by `orders.order_public_id` first, then numeric `orders.id`.
+- Validates that the order belongs to the authenticated customer.
+- Derives `tableSessionId` from `orders.table_scan_session_id`; the frontend does not send it.
+- Recalculates the final payable amount from `cart_items` for table orders, then updates `orders.amount`.
+- Requires the restaurant's `vendor_settings` to have Stripe enabled, a `stripe_account_id`, and completed onboarding.
+- Creates a platform PaymentIntent with `transfer_data.destination` set to the vendor Stripe account ID.
+- Stores an `order_payments` row for audit and webhook reconciliation.
+
+**PaymentIntent metadata:**
+```json
+{
+  "orderId": "ord-aB3xK9pQrS12",
+  "order_id": "42",
+  "vendor_id": "1",
+  "userId": "7",
+  "customerId": "7",
+  "tableSessionId": "12",
+  "paymentFor": "dine_in"
+}
+```
+
+**Response (200):**
+```json
+{
+  "clientSecret": "pi_123_secret_abc",
+  "paymentIntentId": "pi_123"
+}
+```
+
+**Response (422) — already paid or Stripe unavailable:**
+```json
+{ "message": "Stripe payments are not enabled for this restaurant." }
+```
+
+**Response (401):**
+```json
+{ "message": "Unauthenticated." }
+```
+
+---
+
+### 4.5 Verify Stripe Payment Intent
+
+**GET** `/api/customer/payments/verify?payment_intent=pi_123`
+
+Retrieves the PaymentIntent from Stripe, verifies it matches the authenticated customer's internal payment row, syncs the order payment fields, and returns the frontend-safe payment state.
+
+**Authentication:** required (Bearer token).
+
+**Response (200):**
+```json
+{
+  "status": "succeeded",
+  "orderStatus": "paid"
+}
+```
+
+**Status values:**
+| Field | Values |
+|-------|--------|
+| `status` | `requires_payment_method`, `requires_confirmation`, `requires_action`, `processing`, `succeeded`, `canceled` |
+| `orderStatus` | `pending`, `paid`, `failed` |
+
+**Mapping:**
+- `succeeded` → `orderStatus: "paid"` and `orders.payment_received = true`.
+- `processing`, `requires_action`, `requires_confirmation`, `requires_payment_method` → `orderStatus: "pending"`.
+- `canceled` or failed webhook events → `orderStatus: "failed"`.
+
+**Response (404):**
+```json
+{ "message": "No query results for model [App\\Models\\OrderPayment]." }
+```
+
+---
+
+### 4.6 Stripe Payment Webhook
+
+**POST** `/api/customer/payments/webhook`
+
+Receives Stripe PaymentIntent events and keeps `order_payments` and `orders` in sync.
+
+**Authentication:** public route; Stripe signature required via `Stripe-Signature` header and `STRIPE_WEBHOOK_SECRET`.
+
+**Handled events:**
+- `payment_intent.succeeded`
+- `payment_intent.payment_failed`
+- `payment_intent.canceled`
+- `payment_intent.processing`
+
+**Response (200):**
+```json
+{ "received": true }
+```
+
+**Response (400) — invalid signature:**
+```json
+{ "message": "Invalid Stripe webhook signature." }
+```
+
+**Tables used:**
+- `orders` stores current customer-facing payment flags and Stripe transaction ID.
+- `order_payments` stores PaymentIntent audit/reconciliation data.
+- `table_scan_sessions` links dine-in orders to the customer session.
+- `cart_items` is used for backend-side amount calculation.
+- `vendor_settings` provides the vendor Stripe Connect account ID.
 
 ---
 

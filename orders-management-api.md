@@ -1,10 +1,10 @@
 # Orders Management API — Documentation
 
 **Base URL:** `/api`  
-**Authentication:** `Authorization: Bearer {token}` (vendor token via Sanctum)  
+**Authentication:** `Authorization: Bearer {token}` (vendor owner token or active team member token via Sanctum)  
 **Content-Type:** `application/json`
 
-Authenticated endpoints require a valid vendor token obtained via `POST /api/vendor/login`.
+Authenticated endpoints require a token obtained via `POST /api/vendor/login`. Vendor owners/managers can access all vendor routes. Staff tokens are restricted by role: kitchen staff can operate kitchen item states, and waiters can serve items, confirm cash, and close tables.
 
 ---
 
@@ -17,26 +17,28 @@ Authenticated endpoints require a valid vendor token obtained via `POST /api/ven
 5. [Waiter Confirm Order](#5-waiter-confirm-order)
 6. [Confirm Cash Payment](#6-confirm-cash-payment)
 7. [Mark Order Ready](#7-mark-order-ready)
-8. [Mark Order Picked Up](#8-mark-order-picked-up)
-9. [Mark Order Served](#9-mark-order-served)
-10. [Cancel Order](#10-cancel-order)
-11. [Release Batch to Kitchen](#11-release-batch-to-kitchen)
-12. [Fire Next Course](#12-fire-next-course)
-13. [Close Table Session](#13-close-table-session)
-14. [Response Schemas](#14-response-schemas)
-15. [Error Reference](#15-error-reference)
+8. [Update Item Status](#8-update-item-status)
+9. [Mark Order Picked Up](#9-mark-order-picked-up)
+10. [Mark Order Served](#10-mark-order-served)
+11. [Cancel Order](#11-cancel-order)
+12. [Release Batch to Kitchen](#12-release-batch-to-kitchen)
+13. [Fire Next Course](#13-fire-next-course)
+14. [Close Legacy Table Session](#14-close-legacy-table-session)
+15. [Response Schemas](#15-response-schemas)
+16. [Error Reference](#16-error-reference)
 
 ---
 
 ## 1. Overview & Concepts
 
-### Table Sessions
+### Table Scan Sessions
 
-Dine-in orders are grouped into **table sessions**. A session represents one table's visit:
+Dine-in orders are grouped from active `table_scan_sessions`, not the legacy `table_sessions` flow. One physical table can have multiple active scan sessions, so the list endpoint groups active scan sessions by `restaurant_table_id`:
 
 - When a customer scans a QR code and places an order, a session is created (or reused if already active).
-- All orders placed at the same table during a visit belong to the same session.
-- The session is **closed** when the visit ends (`POST .../close`).
+- All active scan sessions for the same restaurant table are returned as one table group.
+- The group exposes `tableId`, `sessionIds`, guest count, orders, totals, payment state, and kitchen summary.
+- The waiter close-table endpoint closes all active scan sessions for that table (`POST /api/vendor/{vendorId}/tables/{tableId}/close-session`).
 
 ### Batch Consolidation Window
 
@@ -86,7 +88,7 @@ Call `POST .../fire-course` to advance to the next course.
 ### `GET /api/vendor/{vendorId}/orders`
 
 Returns orders split into two groups:
-- **`sessions`** — active dine-in sessions, each with all their orders and a kitchen summary.
+- **`sessions`** — active dine-in table groups built from `table_scan_sessions`, grouped by `restaurant_table_id`.
 - **`takeaway`** — takeaway/collect orders not linked to a session.
 
 **Query Parameters:**
@@ -101,22 +103,23 @@ Returns orders split into two groups:
 {
   "sessions": [
     {
-      "sessionId": "1",
+      "sessionId": "table-3",
+      "tableId": "3",
+      "sessionIds": ["18", "19"],
       "vendorId": "5",
       "tableNumber": 3,
       "tableName": "Table 3",
       "status": "active",
-      "currentCourse": "drinks",
-      "batchStartedAt": "2026-03-29T12:00:00.000Z",
-      "batchWindowSeconds": 90,
-      "batchReleasedAt": null,
-      "batchOpen": true,
-      "batchSecondsRemaining": 47,
+      "guestCount": 2,
       "totalAmount": 28.50,
+      "paidAmount": 0,
+      "paymentStatus": "cash_pending",
+      "cashPending": true,
       "closedAt": null,
       "kitchenSummary": {
         "total": 3,
         "pending": 1,
+        "draft": 0,
         "confirmed": 1,
         "preparing": 1,
         "ready": 0,
@@ -223,7 +226,48 @@ Marks the order as ready for pickup or serving. Sets `status → ready` and stam
 
 ---
 
-## 8. Mark Order Picked Up
+## 8. Update Item Status
+
+### `PATCH /api/vendor/orders/{orderId}/items/{cartItemId}`
+
+Updates one cart item linked to the order. This is the canonical endpoint used by the KDS and waiter pages.
+
+**Auth:** Vendor owner/manager, kitchen staff, or waiter staff.
+
+Role restrictions:
+- `kitchen` staff may set `new`, `preparing`, or `ready`.
+- `waiter` staff may set only `served`.
+- Vendor owner/manager may set any allowed status.
+
+Item status is computed from `cart_items` timestamps:
+
+| API `status` | Timestamp effect | Returned item `status` |
+|---|---|---|
+| `new` | clears `preparing_start_at`, `ready_at`, `served_at` | `new` |
+| `preparing` | sets `preparing_start_at` | `in_progress` |
+| `ready` | sets `preparing_start_at` and `ready_at` | `ready` |
+| `served` | sets `preparing_start_at`, `ready_at`, and `served_at` | `served` |
+
+### Request Body
+```json
+{
+  "status": "ready"
+}
+```
+
+Allowed values: `new`, `preparing`, `ready`, `served`.
+
+### Response `200`
+Returns the updated [Order Object](#order-object).
+
+### Error Responses
+- `403` — staff role is not allowed to set the requested state
+- `404` — cart item is not linked to this order
+- `422` — invalid status
+
+---
+
+## 9. Mark Order Picked Up
 
 ### `PATCH /api/orders/{orderId}/picked-up`
 
@@ -235,7 +279,7 @@ Marks a takeaway order as collected. Sets `status → picked_up`. (No timestamp 
 
 ---
 
-## 9. Mark Order Served
+## 10. Mark Order Served
 
 ### `PATCH /api/orders/{orderId}/served`
 
@@ -247,7 +291,7 @@ Marks a dine-in order as served. Sets `status → served` and records `servedAt`
 
 ---
 
-## 10. Cancel Order
+## 11. Cancel Order
 
 ### `PATCH /api/orders/{orderId}/cancel`
 
@@ -268,7 +312,7 @@ Cancels an order. Sets `status → cancelled`, records `cancelledAt`, and option
 
 ---
 
-## 11. Release Batch to Kitchen
+## 12. Release Batch to Kitchen
 
 ### `POST /api/vendor/{vendorId}/sessions/{sessionId}/release`
 
@@ -276,11 +320,11 @@ Immediately releases the current batch to the kitchen, overriding the batch wind
 
 **Request Body:** none
 
-**Response `200`:** Returns the updated [Session Object](#session-object) with `batchOpen: false`.
+**Response `200`:** Returns the updated legacy session object with `batchOpen: false`.
 
 ---
 
-## 12. Fire Next Course
+## 13. Fire Next Course
 
 ### `POST /api/vendor/{vendorId}/sessions/{sessionId}/fire-course`
 
@@ -294,7 +338,7 @@ Returns `422` if already on `desserts`.
 
 **Request Body:** none
 
-**Response `200`:** Returns the updated [Session Object](#session-object) with the new `currentCourse`.
+**Response `200`:** Returns the updated legacy session object with the new `currentCourse`.
 
 **Response `422`:**
 ```json
@@ -305,19 +349,23 @@ Returns `422` if already on `desserts`.
 
 ---
 
-## 13. Close Table Session
+## 14. Close Legacy Table Session
 
 ### `POST /api/vendor/{vendorId}/sessions/{sessionId}/close`
 
-Closes the table session at the end of a visit. Sets `status → closed` and records `closedAt`. The session will no longer appear in the active sessions index.
+Closes a legacy `table_sessions` record. New waiter flows should use the table-scan endpoint documented in `documentation/qr-management-api.md`:
+
+`POST /api/vendor/{vendorId}/tables/{tableId}/close-session`
+
+This legacy endpoint sets `status → closed` and records `closedAt` on the requested legacy session.
 
 **Request Body:** none
 
-**Response `200`:** Returns the updated [Session Object](#session-object) with `status: "closed"`.
+**Response `200`:** Returns the updated legacy session object with `status: "closed"`.
 
 ---
 
-## 14. Response Schemas
+## 15. Response Schemas
 
 ### Order Object
 
@@ -328,7 +376,8 @@ Closes the table session at the end of a visit. Sets `status → closed` and rec
   "orderNumber": "#9001",
   "orderType": "dine-in",
   "tableNumber": "3",
-  "tableSessionId": "1",
+  "tableId": "3",
+  "tableScanSessionId": "18",
   "course": "mains",
   "waiterConfirmed": true,
   "waiterConfirmedAt": "2026-03-29T12:05:00.000Z",
@@ -350,10 +399,12 @@ Closes the table session at the end of a visit. Sets `status → closed` and rec
       "notes": null,
       "unitPrice": 18.50,
       "lineTotal": 18.50,
+      "status": "in_progress",
       "sharedBetween": 1,
       "sharedWithOrderIds": [],
-      "preparingStartAt": null,
-      "readyAt": null
+      "preparingStartAt": "2026-03-29T12:03:00.000Z",
+      "readyAt": null,
+      "servedAt": null
     }
   ],
   "amount": 18.50,
@@ -369,6 +420,9 @@ Closes the table session at the end of a visit. Sets `status → closed` and rec
   "servedAt": null,
   "cancelledAt": null,
   "cancelledReason": null,
+  "timeline": [
+    { "status": "received", "timestamp": "2026-03-29T12:00:00.000Z" }
+  ],
   "createdAt": "2026-03-29T12:00:00.000Z",
   "updatedAt": "2026-03-29T12:05:00.000Z"
 }
@@ -377,25 +431,26 @@ Closes the table session at the end of a visit. Sets `status → closed` and rec
 **Notes:**
 - `itemsCount` is computed live as the sum of `quantity` across linked cart_items.
 - `items[]` is built live from `cart_items` (owned by the order's session, plus any cart_item whose `order_ids` JSON contains the order id).
+- Item `status` is derived from `served_at`, `ready_at`, and `preparing_start_at`: `served`, `ready`, `in_progress`, or `new`.
 - `readyAt` reflects the order-level rollup (latest timestamp once *all* linked cart_items have `ready_at` set). The per-item `readyAt` is the canonical value.
 - `pickedUpAt` and `guestCount` are no longer returned — both columns were dropped from `orders`.
 
-### Session Object
+### Table Scan Session Group Object
 
 ```json
 {
-  "sessionId": "1",
+  "sessionId": "table-3",
+  "tableId": "3",
+  "sessionIds": ["18", "19"],
   "vendorId": "5",
   "tableNumber": 3,
   "tableName": "Table 3",
   "status": "active",
-  "currentCourse": "mains",
-  "batchStartedAt": "2026-03-29T12:00:00.000Z",
-  "batchWindowSeconds": 90,
-  "batchReleasedAt": "2026-03-29T12:01:30.000Z",
-  "batchOpen": false,
-  "batchSecondsRemaining": 0,
+  "guestCount": 2,
   "totalAmount": 46.00,
+  "paidAmount": 20.00,
+  "paymentStatus": "partial",
+  "cashPending": false,
   "closedAt": null,
   "kitchenSummary": {
     "total": 4,
@@ -414,7 +469,7 @@ Closes the table session at the end of a visit. Sets `status → closed` and rec
 
 ---
 
-## 15. Error Reference
+## 16. Error Reference
 
 | HTTP Code | Meaning |
 |---|---|
@@ -436,9 +491,10 @@ Closes the table session at the end of a visit. Sets `status → closed` and rec
 | `PATCH` | `/api/orders/{orderId}/confirm` | Waiter confirm order |
 | `PATCH` | `/api/orders/{orderId}/confirm-cash` | Confirm cash payment received |
 | `PATCH` | `/api/orders/{orderId}/ready` | Mark order ready |
+| `PATCH` | `/api/vendor/orders/{orderId}/items/{cartItemId}` | Update cart item status for KDS/waiter |
 | `PATCH` | `/api/orders/{orderId}/picked-up` | Mark order picked up (takeaway) |
 | `PATCH` | `/api/orders/{orderId}/served` | Mark order served (dine-in) |
 | `PATCH` | `/api/orders/{orderId}/cancel` | Cancel order |
 | `POST` | `/api/vendor/{vendorId}/sessions/{sessionId}/release` | Release batch to kitchen now |
 | `POST` | `/api/vendor/{vendorId}/sessions/{sessionId}/fire-course` | Advance to next course |
-| `POST` | `/api/vendor/{vendorId}/sessions/{sessionId}/close` | Close table session |
+| `POST` | `/api/vendor/{vendorId}/sessions/{sessionId}/close` | Close legacy table session |
