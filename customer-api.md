@@ -466,8 +466,8 @@ Returns all active menu categories across discoverable restaurants (deduplicated
         "sunday":    { "closed": true }
       },
       "payment_methods": {
-        "card": true,
-        "cash": true
+        "on-site": true,
+        "stripe": false
       },
       "loyalty": {
         "enabled": true,
@@ -542,8 +542,8 @@ Returns all active menu categories across discoverable restaurants (deduplicated
   },
   "distance_km": 1.8,
   "payment_methods": {
-    "card": true,
-    "cash": true
+    "on-site": true,
+    "stripe": false
   },
   "loyalty": {
     "enabled": true,
@@ -798,14 +798,8 @@ Returns the public "About" profile for a restaurant — vanity stats, features, 
     { "title": "Vegan options", "description": "Dedicated vegan menu section." }
   ],
   "payment_methods": {
-    "cash": true,
-    "card": true,
-    "visa": true,
-    "mastercard": true,
-    "amex": false,
-    "apple_pay": true,
-    "google_pay": true,
-    "bank_transfer": false
+    "on-site": true,
+    "stripe": true
   },
   "vat_number": "ATU12345678",
   "address": "Herrengasse 14",
@@ -834,7 +828,7 @@ Returns the public "About" profile for a restaurant — vanity stats, features, 
 - `restaurant_features` is a list of structured feature objects chosen by the vendor. Each entry has:
   - `title` — short label (string, required, max 100)
   - `description` — optional longer explanation (string, max 500, may be `null`)
-- `payment_methods` reflects every accepted method on the vendor settings.
+- `payment_methods["on-site"]` reflects whether customers can pay staff at the restaurant. `payment_methods.stripe` is `true` only when Stripe is enabled and the vendor's Stripe Connect account is onboarded.
 - `contact` is a partial object — each field is only included when the vendor has marked it as publicly visible:
   - `phone` requires `show_phone_public = true` (default `true`)
   - `email` requires `show_email_public = true` (default `false`)
@@ -1722,7 +1716,52 @@ Returns one order detail for the authenticated customer.
 
 ---
 
-### 4.4 Create Stripe Payment Intent
+### 4.4 Get Restaurant Payment Methods
+
+**GET** `/api/customer/payment-methods?restaurant_id={restaurant_id}`
+
+Returns the customer-facing payment methods currently available for a restaurant.
+
+**Authentication:** public route; no Bearer token required.
+
+**Query Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `restaurant_id` | string | yes | Vendor numeric ID, `vendor_public_id`, or restaurant slug |
+| `vendor_public_id` | string | no | Alias for `restaurant_id`; useful when the caller already has the vendor public ID |
+
+**Response (200):**
+```json
+{
+  "method": {
+    "on-site": true,
+    "stripe": true
+  }
+}
+```
+
+**Rules:**
+- `method["on-site"]` mirrors `vendor_settings.accept_on_site`.
+- `method.stripe` is `true` only when `stripe_enabled = true`, `stripe_account_id` is present, and `stripe_onboarding_complete = true`.
+
+**Response (422):**
+```json
+{
+  "message": "The restaurant id field is required.",
+  "errors": {
+    "restaurant_id": ["The restaurant id field is required."]
+  }
+}
+```
+
+**Response (404):**
+```json
+{ "message": "Restaurant not found." }
+```
+
+---
+
+### 4.5 Create Stripe Payment Intent
 
 **POST** `/api/customer/payments/create-intent`
 
@@ -1733,18 +1772,18 @@ Creates a Stripe PaymentIntent for the authenticated customer's order. This endp
 **Body:**
 ```json
 {
-  "orderId": "ord-aB3xK9pQrS12",
-  "userId": "7",
-  "customerId": "7"
+  "order_id": "ord-aB3xK9pQrS12",
+  "customer_id": 7
 }
 ```
 
-`userId` and `customerId` are optional compatibility fields. If sent, they must match the authenticated customer; the backend never trusts them as the source of identity.
+`order_id` may be either the numeric `orders.id` or `orders.order_public_id`. `customer_id` must be the numeric authenticated customer ID from the Bearer token.
 
 **Backend behavior:**
-- Resolves `orderId` by `orders.order_public_id` first, then numeric `orders.id`.
+- Resolves `order_id` by `orders.order_public_id` first, then numeric `orders.id`.
+- Validates that `customer_id` matches the authenticated customer.
 - Validates that the order belongs to the authenticated customer.
-- Derives `tableSessionId` from `orders.table_scan_session_id`; the frontend does not send it.
+- Derives `table_session_id` from `orders.table_scan_session_id`; the frontend does not send it.
 - Recalculates the final payable amount from `cart_items` for table orders, then updates `orders.amount`.
 - Requires the restaurant's `vendor_settings` to have Stripe enabled, a `stripe_account_id`, and completed onboarding.
 - Creates a platform PaymentIntent with `transfer_data.destination` set to the vendor Stripe account ID.
@@ -1753,13 +1792,12 @@ Creates a Stripe PaymentIntent for the authenticated customer's order. This endp
 **PaymentIntent metadata:**
 ```json
 {
-  "orderId": "ord-aB3xK9pQrS12",
   "order_id": "42",
+  "order_public_id": "ord-aB3xK9pQrS12",
   "vendor_id": "1",
-  "userId": "7",
-  "customerId": "7",
-  "tableSessionId": "12",
-  "paymentFor": "dine_in"
+  "customer_id": "7",
+  "table_session_id": "12",
+  "payment_for": "dine_in"
 }
 ```
 
@@ -1783,7 +1821,7 @@ Creates a Stripe PaymentIntent for the authenticated customer's order. This endp
 
 ---
 
-### 4.5 Verify Stripe Payment Intent
+### 4.6 Verify Stripe Payment Intent
 
 **GET** `/api/customer/payments/verify?payment_intent=pi_123`
 
@@ -1817,7 +1855,7 @@ Retrieves the PaymentIntent from Stripe, verifies it matches the authenticated c
 
 ---
 
-### 4.6 Stripe Payment Webhook
+### 4.7 Stripe Payment Webhook
 
 **POST** `/api/customer/payments/webhook`
 
