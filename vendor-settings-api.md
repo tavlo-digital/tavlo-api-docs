@@ -473,6 +473,32 @@ Returns the current user under a `data` key using the same shape shown above.
 }
 ```
 
+### `POST /vendor/profile/password`
+
+**Auth:** Vendor owner or active team member.
+
+Changes the authenticated vendor owner or staff user's password. Staff users, including waiters and kitchen users, may only change their own password.
+
+### Request Body
+```json
+{
+  "current_password": "old-password",
+  "password": "new-password123",
+  "password_confirmation": "new-password123"
+}
+```
+
+### Response `200 OK`
+```json
+{
+  "message": "Password changed successfully."
+}
+```
+
+### Validation Errors
+- `422` — current password is incorrect, new password is shorter than 8 characters, or confirmation does not match.
+- `401` — missing or invalid Bearer token.
+
 ---
 
 ## 13. Team Access
@@ -629,6 +655,71 @@ Returns the updated team member object.
 ```json
 {
   "message": "Team member removed"
+}
+```
+
+---
+
+## Stripe Disconnect
+
+**`POST /vendor/{vendorId}/stripe/disconnect`**
+
+Disconnects the vendor's Stripe Connect Express account. Deletes the account on Stripe, removes the account ID from the database, and disables online payments.
+
+### Auth
+`Authorization: Bearer {token}` — vendor owner only.
+
+### Path Parameters
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `vendorId` | string | Vendor public ID or numeric ID |
+
+### Response `200 OK`
+```json
+{
+  "message": "Stripe account disconnected successfully."
+}
+```
+
+### Error `422`
+```json
+{
+  "message": "No Stripe account is connected."
+}
+```
+
+---
+
+## Delete Account
+
+**`POST /vendor/{vendorId}/settings/delete-account`**
+
+Deactivates the vendor account. Revokes all API tokens, sets vendor status to `deactivated`, takes the restaurant offline, and disables discoverability.
+
+### Auth
+`Authorization: Bearer {token}` — vendor owner only.
+
+### Path Parameters
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `vendorId` | string | Vendor public ID or numeric ID |
+
+### Request Body
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `password` | string | Yes | The vendor's current password for confirmation |
+
+### Response `200 OK`
+```json
+{
+  "message": "Your account has been deactivated successfully."
+}
+```
+
+### Error `422`
+```json
+{
+  "message": "The password you entered is incorrect."
 }
 ```
 

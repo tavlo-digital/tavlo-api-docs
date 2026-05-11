@@ -1071,7 +1071,7 @@ with HTTP `422`.
 
 **GET** `/api/customer/cart`
 
-Returns all items per person at the same table. Only cart items that have **not** been attached to any order are included — items whose `order_ids` array is non-empty are excluded from this response (they appear in the order/history endpoints instead).
+Returns all items per person at the same table. Cart items are excluded from this response if they have been attached to any order — specifically, items whose `order_ids` array is non-empty **or** items that existed at or before the session's latest order was created. Only unordered items (added after the most recent order, if any) appear here; ordered items are shown in the order/history endpoints instead.
 
 **Response (200):**
 ```json
@@ -1885,6 +1885,119 @@ Receives Stripe PaymentIntent events and keeps `order_payments` and `orders` in 
 - `table_scan_sessions` links dine-in orders to the customer session.
 - `cart_items` is used for backend-side amount calculation.
 - `vendor_settings` provides the vendor Stripe Connect account ID.
+
+---
+
+### 4.8 Track Participant Order 🔒
+
+**GET** `/api/customer/orders/{orderPublicId}/tracking`
+
+Returns the authenticated participant's order tracking payload. This endpoint is scoped to the authenticated customer; the order must belong to the customer directly or through the customer's `table_scan_session`.
+
+**Authentication:** Bearer token with `auth:customer`.
+
+**Request Body:** none
+
+**Response (200):**
+```json
+{
+  "id": 101,
+  "order_public_id": "ORD-ABC123",
+  "order_number": "1001",
+  "status": "draft",
+  "estimated_delivery_time": "2025-11-27T10:31:00+00:00",
+  "total_amount": 25.99,
+  "currency": "EUR",
+  "order_type": "dine-in",
+  "payment_method": null,
+  "payment_pending": true,
+  "payment_received": false,
+  "items": [
+    {
+      "cart_item_id": 1,
+      "menu_item_id": 42,
+      "name": "Fries",
+      "image_url": null,
+      "quantity": 2,
+      "unit_price": 3.5,
+      "line_total": 7,
+      "status": "Preparing",
+      "notes": null
+    },
+    {
+      "cart_item_id": 3,
+      "menu_item_id": 51,
+      "name": "Pizza",
+      "image_url": null,
+      "quantity": 1,
+      "unit_price": 18.99,
+      "line_total": 18.99,
+      "status": "Preparing",
+      "notes": null
+    }
+  ],
+  "shared_items": [
+    {
+      "cart_item_id": 1,
+      "menu_item_id": 42,
+      "name": "Fries",
+      "image_url": null,
+      "quantity": 2,
+      "unit_price": 3.5,
+      "line_total": 7,
+      "status": "Preparing",
+      "notes": null,
+      "shared_between": 2,
+      "shared_with": [
+        {
+          "order_id": 102,
+          "customer_id": 9,
+          "customer_name": "Bob Jones"
+        }
+      ],
+      "my_share": 3.5
+    },
+    {
+      "cart_item_id": 3,
+      "menu_item_id": 51,
+      "name": "Pizza",
+      "image_url": null,
+      "quantity": 1,
+      "unit_price": 18.99,
+      "line_total": 18.99,
+      "status": "Preparing",
+      "notes": null,
+      "shared_between": 2,
+      "shared_with": [
+        {
+          "order_id": 101,
+          "customer_id": 9,
+          "customer_name": "Bob Jones"
+        }
+      ],
+      "my_share": 9.5
+    }
+  ]
+}
+```
+
+**Item rules:**
+- `items` contains only the cart items that the authenticated participant added to their own cart.
+- `shared_items` is empty by default.
+- `shared_items` contains an owned item only when that participant shares it with another order.
+- `shared_items` contains another participant's item when that item is shared with the authenticated participant's order.
+- `status` is derived from the cart item timestamps: `Served`, `Ready`, `Preparing`, or `null`.
+- `estimated_delivery_time` is computed from the order creation time plus the vendor's `estimated_prep_time` setting.
+
+**Response (401):**
+```json
+{ "message": "Unauthenticated." }
+```
+
+**Response (404):**
+```json
+{ "message": "No query results for model [App\\Models\\Order]." }
+```
 
 ---
 
