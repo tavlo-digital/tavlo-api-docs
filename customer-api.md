@@ -1821,7 +1821,55 @@ Creates a Stripe PaymentIntent for the authenticated customer's order. This endp
 
 ---
 
-### 4.6 Verify Stripe Payment Intent
+### 4.6 Update Stripe Payment Intent With Tip
+
+**POST** `/api/customer/payments/update-intent`
+
+Updates an existing Stripe PaymentIntent after the customer chooses a tip. The backend stores the tip on the order and updates the Stripe payable amount to `order amount + tip`.
+
+**Authentication:** required (Bearer token).
+
+**Body:**
+```json
+{
+  "payment_intent_id": "pi_123_secret_abc",
+  "order_id": "ord-aB3xK9pQrS12",
+  "customer_id": 123,
+  "tip_amount": 5.00
+}
+```
+
+`payment_intent_id` may be either the PaymentIntent ID (`pi_123`) or the client secret (`pi_123_secret_abc`). `order_id` may be either the numeric `orders.id` or `orders.order_public_id`. `customer_id` must be the numeric authenticated customer ID from the Bearer token.
+
+**Backend behavior:**
+- Resolves the order and validates that it belongs to the authenticated customer.
+- Validates that the PaymentIntent belongs to the same order/customer through `order_payments`.
+- Stores `tip_amount` in `orders.tip_amount`.
+- Keeps `orders.amount` as the order subtotal/payable amount before tip.
+- Updates the Stripe PaymentIntent amount to `orders.amount + orders.tip_amount`.
+- Updates `order_payments.amount` to the final charged amount including tip.
+
+**Response (200):**
+```json
+{
+  "clientSecret": "pi_123_secret_abc",
+  "paymentIntentId": "pi_123"
+}
+```
+
+**Response (422):**
+```json
+{ "message": "PaymentIntent cannot be updated in its current status." }
+```
+
+**Response (401):**
+```json
+{ "message": "Unauthenticated." }
+```
+
+---
+
+### 4.7 Verify Stripe Payment Intent
 
 **GET** `/api/customer/payments/verify?payment_intent=pi_123`
 
@@ -1855,7 +1903,7 @@ Retrieves the PaymentIntent from Stripe, verifies it matches the authenticated c
 
 ---
 
-### 4.7 Stripe Payment Webhook
+### 4.8 Stripe Payment Webhook
 
 **POST** `/api/customer/payments/webhook`
 
@@ -1888,7 +1936,7 @@ Receives Stripe PaymentIntent events and keeps `order_payments` and `orders` in 
 
 ---
 
-### 4.8 Track Participant Order 🔒
+### 4.9 Track Participant Order 🔒
 
 **GET** `/api/customer/orders/{orderPublicId}/tracking`
 
