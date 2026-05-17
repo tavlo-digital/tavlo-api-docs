@@ -322,7 +322,20 @@ Returns profile info, recent restaurants, and loyalty overview.
 **Response (200):**
 ```json
 {
-  "profile": { ... },
+  "profile": {
+    "id": 1,
+    "customer_public_id": "cust_abc123",
+    "first_name": "Sara",
+    "last_name": "Khan",
+    "phone": "+43123456789",
+    "email": "sara@example.com",
+    "gender": "female",
+    "date_of_birth": "1990-01-15",
+    "address": "123 Main Street, Vienna",
+    "profile_picture": "http://localhost:8000/media/customers/1/avatar/abc123.jpg",
+    "monthly_orders": 2,
+    "orders_count": 18
+  },
   "recent_restaurants": [
     {
       "id": 1,
@@ -343,15 +356,20 @@ Returns profile info, recent restaurants, and loyalty overview.
 }
 ```
 
+- `monthly_orders`: number of orders placed by the authenticated customer in the current calendar month.
+- `orders_count`: total number of orders ever placed by the authenticated customer.
+
 ---
 
 ### 2.2 Update Profile
 
-**PATCH** `/api/customer/profile` 🔒
+**PATCH / PUT** `/api/customer/profile` 🔒
 
 **Body (all optional):**
 ```json
 {
+  "first_name": "Sara",
+  "last_name": "Khan",
   "gender": "male",
   "date_of_birth": "1990-01-15",
   "address": "123 Main Street, Vienna",
@@ -360,16 +378,74 @@ Returns profile info, recent restaurants, and loyalty overview.
 ```
 
 **Validation:**
+- `first_name`: nullable, string, max 255
+- `last_name`: nullable, string, max 255
 - `gender`: nullable, in: `male`, `female`, `other`, `prefer_not_to_say`
 - `date_of_birth`: nullable, date, before today
 - `address`: nullable, string, max 500
 - `profile_picture`: nullable, string, max 500
 
-**Note:** `first_name`, `last_name`, `email`, and `phone` are not editable per requirements.
+**Response (200):**
+```json
+{
+  "message": "Profile updated.",
+  "user": { ... }
+}
+```
 
 ---
 
-### 2.3 Change Password
+### 2.3 Change Phone Number
+
+**PUT** `/api/customer/profile/change-phone` 🔒
+
+**Body:**
+```json
+{
+  "new_number": "+43123456789"
+}
+```
+
+**Validation:**
+- `new_number`: required, string, max 30, unique among customer phone numbers except the authenticated customer
+
+**Response (200):**
+```json
+{
+  "message": "Phone number updated.",
+  "user": { ... }
+}
+```
+
+---
+
+### 2.4 Change Email Address
+
+**PUT / POST** `/api/customer/profile/change-email` 🔒
+
+**Body:**
+```json
+{
+  "current_email": "old@example.com",
+  "new_email": "new@example.com"
+}
+```
+
+**Validation:**
+- `current_email`: required, email, must match the authenticated customer's current email address
+- `new_email`: required, email, max 255, unique among customer email addresses except the authenticated customer
+
+**Response (200):**
+```json
+{
+  "message": "Email address updated.",
+  "user": { ... }
+}
+```
+
+---
+
+### 2.5 Change Password
 
 **POST** `/api/customer/profile/password` 🔒
 
@@ -598,12 +674,20 @@ Returns all active menu categories across discoverable restaurants (deduplicated
     "has_discount": false,
     "discount_percent": null,
     "discounted_price": null,
+    "vat_rate": 20,
+    "tax_category": "food",
+    "vat_amount": 3.80,
     "rating": 4.4,
     "review_count": 252,
     "ordered_count": 1200,
     "popularity_rank": 4,
     "calories": 680,
     "dietary_preference": null,
+    "paid_addons": [
+      { "name": "Extra cheese", "price": 1.50 }
+    ],
+    "free_addons": ["Ketchup"],
+    "removable_items": ["Onions"],
     "category": {
       "id": 1,
       "name": "Burger",
@@ -622,7 +706,9 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 - `popularity_rank` is computed from `ordered_count` (e.g. `4` = "#4 most liked").
 - `rating` is a percentage-style approval score (e.g. `88%` with `252` reviews).
 - `discount_percent` and `discounted_price` are only present when `has_discount` is `true`.
+- `vat_amount` is calculated per unit from the effective price (`discounted_price` when discounted, otherwise `price`) multiplied by `vat_rate`.
 - Each item includes its `category` for grouping/display.
+- `paid_addons`, `free_addons`, and `removable_items` are the menu item's customization options configured by the vendor. These are separate from `modifier_groups`.
 
 ---
 
@@ -641,6 +727,9 @@ Returns all active menu categories across discoverable restaurants (deduplicated
   "has_discount": true,
   "discount_percent": 15.00,
   "discounted_price": 16.14,
+  "vat_rate": 20,
+  "tax_category": "food",
+  "vat_amount": 3.23,
   "available": true,
   "rating": 4.4,
   "review_count": 252,
@@ -650,6 +739,11 @@ Returns all active menu categories across discoverable restaurants (deduplicated
   "carbs": 45.00,
   "protein": 38.00,
   "dietary_preference": null,
+  "paid_addons": [
+    { "name": "Extra cheese", "price": 1.50 }
+  ],
+  "free_addons": ["Ketchup"],
+  "removable_items": ["Onions"],
   "ingredients": ["Chicken breast", "Breadcrumbs", "Flour", "Coleslaw"],
   "category": {
     "id": 1,
@@ -766,7 +860,7 @@ Returns all public (non-flagged) reviews for a restaurant, with reviewer info an
 
 **Notes:**
 - Only non-flagged reviews are returned.
-- `menu_items` is derived from the order attached to the review. Each entry includes the item `name`, `quantity` ordered, and — when the vendor still has a matching menu item — its `id`, `slug`, and `image_url`. `id` and `image_url` are `null` if the item is no longer on the menu.
+- `menu_items` is derived live from `cart_items` linked to the review's order (`table_scan_session_id` ownership plus any shared `order_ids`). Each entry includes the item `name`, `quantity` ordered, and — when the vendor still has a matching menu item — its `id`, `slug`, and `image_url`. `id`, `name`, `slug`, and `image_url` are `null` if the menu item can no longer be resolved.
 - `images` is an array of image URLs uploaded by the reviewer (may be empty).
 - `reviewer.name` falls back to `"Anonymous"` if the customer has no name set.
 - `review_summary` is computed across **all** non-flagged reviews for this restaurant — it is independent of the `rating`, `with_images`, and pagination filters, so the breakdown stays stable while the user filters the list.
@@ -855,7 +949,7 @@ Returns the public "About" profile for a restaurant — vanity stats, features, 
 
 **POST** `/api/customer/table/scan`
 
-Customer scans a printed table QR code and creates a new table scan session with a unique 4-digit PIN.
+Customer scans a printed table QR code. If the table has no active session, this creates the owner session with a unique 4-digit PIN that can be shared with joining customers.
 
 **Authentication:** required (Bearer token).
 
@@ -881,7 +975,24 @@ d5938525-f2a5-4849-803e-d579582af11f
 {
   "message": "Table session started",
   "status": "active",
-  "requiresPin": true,
+  "requiresPin": false,
+  "pin": "0473",
+  "session": {
+    "id": "12",
+    "status": "active",
+    "scannedAt": "2026-04-23T10:15:00+00:00"
+  },
+  "table": { "id": "5", "number": 3, "name": "T3" },
+  "vendor": { "id": "VID-8492", "name": "Bella Italia" }
+}
+```
+
+**Response (201) — same customer scans the active table again:**
+```json
+{
+  "message": "Table session was already started",
+  "status": "active",
+  "requiresPin": false,
   "pin": "0473",
   "session": {
     "id": "12",
@@ -913,6 +1024,8 @@ d5938525-f2a5-4849-803e-d579582af11f
 > **Note:** `pin` in the 409 payload is the existing owner PIN — only the original scanning customer (or an admin/debug context) should rely on it. Joining customers should still be sent through `POST /api/customer/table/pin` with the PIN they were given verbally / on screen.
 
 **Flow note:**
+- If scan returns `201`, `requiresPin = false` because the scanning customer is already in the newly-created table session. The returned `pin` is for sharing with other customers.
+- If the same customer scans again while their table session is still active, scan returns `201` with the existing session data and `requiresPin = false`; no new session is created.
 - If scan returns `409` with `status = "active"`, the UI should show a PIN entry form.
 - The customer then submits that PIN to `POST /api/customer/table/pin` to join the already-active table session.
 
@@ -1071,7 +1184,7 @@ with HTTP `422`.
 
 **GET** `/api/customer/cart`
 
-Returns all items per person at the same table. Cart items are excluded from this response if they have been attached to any order — specifically, items whose `order_ids` array is non-empty **or** items that existed at or before the session's latest order was created. Only unordered items (added after the most recent order, if any) appear here; ordered items are shown in the order/history endpoints instead.
+Returns all visible cart items per person at the same table. Draft orders do **not** hide cart rows: items remain visible while the customer is still reviewing or sharing a draft. Cart items are excluded only after they belong to a confirmed-or-later order — specifically, items whose `order_ids` include a confirmed-or-later order ID **or** items that existed at or before the session's latest confirmed-or-later order was created. Newly added items after confirmation appear in the cart again.
 
 **Response (200):**
 ```json
@@ -1096,7 +1209,23 @@ Returns all items per person at the same table. Cart items are excluded from thi
           "id": 1,
           "quantity": 2,
           "notes": "No salt",
-          "menu_item": { "id": 42, "name": "Fries", "price": 3.50, "image_url": null }
+          "price": 5.00,
+          "paid_addons": [
+            { "name": "Cheese sauce", "price": 1.50 }
+          ],
+          "free_addons": ["Ketchup"],
+          "removed_items": ["Salt"],
+          "vat_amount": 2.00,
+          "line_total": 10.00,
+          "menu_item": {
+            "id": 42,
+            "name": "Fries",
+            "price": 3.50,
+            "vat_rate": 20,
+            "vat_amount": 1.40,
+            "tax_category": "food",
+            "image_url": null
+          }
         }
       ]
     },
@@ -1122,7 +1251,12 @@ Adds an item to the authenticated customer's cart. If the same `menu_item_id` al
 {
   "menu_item_id": 42,
   "quantity": 2,
-  "notes": "No salt"
+  "notes": "No salt",
+  "paid_addons": [
+    { "name": "Cheese sauce" }
+  ],
+  "free_addons": ["Ketchup"],
+  "removed_items": ["Salt"]
 }
 ```
 
@@ -1130,9 +1264,15 @@ Adds an item to the authenticated customer's cart. If the same `menu_item_id` al
 - `menu_item_id`: required, must exist in `menu_items`
 - `quantity`: optional, integer, 1–99 (default `1`)
 - `notes`: optional, string, max 500
+- `paid_addons`: optional array of selected paid add-on objects. Each object must include `name`; submitted prices are ignored and replaced with the vendor-configured price for that menu item.
+- `free_addons`: optional array of selected free add-on names.
+- `removed_items`: optional array of selected removed item names. `removable_items` is still accepted for backward compatibility.
 
 **Behavior:**
 - If a cart item with the same `menu_item_id` already exists for the customer's active `table_scan_session`, the existing item's quantity is incremented by the requested amount (default `1`). The existing item is returned.
+- A cart item is only merged with an existing row when `menu_item_id`, `paid_addons`, `free_addons`, and `removed_items` all match. Different customization choices create separate cart rows.
+- Selected customization options must exist on the menu item. Invalid selections return `422`.
+- Paid add-on prices are included in `price`, `line_total`, order draft totals, and payment totals.
 - If no matching cart item exists, a new one is created.
 
 **Response (201):**
@@ -1141,7 +1281,23 @@ Adds an item to the authenticated customer's cart. If the same `menu_item_id` al
   "id": 1,
   "quantity": 2,
   "notes": "No salt",
-  "menu_item": { "id": 42, "name": "Fries", "price": 3.50, "image_url": null }
+  "price": 5.00,
+  "paid_addons": [
+    { "name": "Cheese sauce", "price": 1.50 }
+  ],
+  "free_addons": ["Ketchup"],
+  "removed_items": ["Salt"],
+  "vat_amount": 2.00,
+  "line_total": 10.00,
+  "menu_item": {
+    "id": 42,
+    "name": "Fries",
+    "price": 3.50,
+    "vat_rate": 20,
+    "vat_amount": 1.40,
+    "tax_category": "food",
+    "image_url": null
+  }
 }
 ```
 
@@ -1480,12 +1636,20 @@ This is the **canonical "table view" response** — it is also returned (with th
             "name": "Fries",
             "image_url": null,
             "quantity": 2,
-            "unit_price": 3.50,
-            "line_total": 7.00,
+            "unit_price": 5.00,
+            "paid_addons": [
+              { "name": "Cheese sauce", "price": 1.50 }
+            ],
+            "free_addons": ["Ketchup"],
+            "removed_items": ["Salt"],
+            "vat_rate": 20,
+            "tax_category": "food",
+            "vat_amount": 2.00,
+            "line_total": 10.00,
             "is_mine": true,
             "shared_between": 1,
             "shared_with": [],
-            "my_share": 7.00,
+            "my_share": 10.00,
             "status": "Preparing",
             "preparing_start_at": "2026-04-27T10:31:00+00:00",
             "ready_at": null,
@@ -1529,7 +1693,9 @@ This is the **canonical "table view" response** — it is also returned (with th
 | `menu_item_id` | int | The menu item this cart entry references. |
 | `name`, `image_url` | string\|null | Cached from `menu_items`. |
 | `quantity` | int | Cart quantity. |
-| `unit_price` | float | Per-unit price. |
+| `unit_price` | float | Per-unit price, including selected paid add-ons. |
+| `paid_addons`, `free_addons`, `removed_items` | array | Selected customization options for this cart item. |
+| `vat_rate`, `tax_category`, `vat_amount` | float/string | Tax fields from the menu item. `vat_amount` is `line_total × vat_rate / 100`. |
 | `line_total` | float | `unit_price × quantity`. |
 | `is_mine` | bool | `true` if the cart_item belongs to the caller's own session. |
 | `shared_between` | int | `1 + count(order_ids)`. The number of orders splitting this item (owner + sharers). |
@@ -2161,7 +2327,12 @@ Returns the customer's favorite restaurants.
     "avg_rating": 4.2,
     "review_count": 890,
     "is_open": true,
-    "status": "Open"
+    "status": "Open",
+    "business_hours": {
+      "monday": { "open": "11:00", "close": "22:00", "closed": false },
+      "tuesday": { "open": "11:00", "close": "22:00", "closed": false }
+    },
+    "cuisines": ["Burgers", "Fast food"]
   }
 ]
 ```
@@ -2170,6 +2341,8 @@ Returns the customer's favorite restaurants.
 - `avg_rating` is rounded to 1 decimal (0 if no reviews). `review_count` is the total number of reviews.
 - `is_open` is computed from the vendor's `business_hours` for the current day/time.
 - `status` is the human-readable string `"Open"` or `"Closed"`, mirroring `is_open`.
+- `business_hours` is the vendor's configured weekly business-hours map, or `null` if unavailable.
+- `cuisines` is derived from the restaurant's active menu categories.
 
 ---
 
@@ -2244,17 +2417,18 @@ Removes the given restaurant from the authenticated customer's favorites.
 **Body:**
 ```json
 {
-  "order_public_id": "ord_abc123...",
+  "vendor_public_id": "V-ABC123",
   "rating": 5,
-  "text": "Amazing food and service!"
+  "review": "Amazing food and service!"
 }
 ```
 
 **Validation:**
-- `order_public_id`: required, must belong to the customer
+- `vendor_public_id`: required, must identify an existing vendor
 - `rating`: required, integer, 1–5
-- `text`: nullable, string, max 2000
-- One review per order
+- `review`: nullable, string, max 2000
+- Customer must have at least one order with the vendor
+- One review per customer/vendor
 
 ---
 
