@@ -315,6 +315,7 @@ Authorization: Bearer {token}
           ]
         }
       ],
+      "modifierGroupIds": [1],
       "translations": {
         "en": {
           "language": "en",
@@ -370,6 +371,7 @@ Authorization: Bearer {token}
 | `allergens` | array | Relational allergen objects |
 | `tags` | array | Relational tag objects |
 | `modifierGroups` | array | Linked modifier groups with options |
+| `modifierGroupIds` | array[int] | Linked modifier group IDs in menu-item sort order |
 | `translations` | object | Language-keyed translation objects |
 | `ingredients` | array | Recipe ingredient links |
 | `hasDiscount` | boolean | Whether a discount is active |
@@ -472,7 +474,7 @@ Content-Type: application/json
 | `dietaryPreference` | string | No | e.g. "vegan", "vegetarian", "pescetarian" |
 | `allergenIds` | array[int] | No | Array of allergen IDs from `/api/vendor/allergens` |
 | `tagIds` | array[int] | No | Array of special tag IDs from `/api/vendor/special-tags` |
-| `modifierGroupIds` | array[int] | No | Array of modifier group IDs. Ordering in array = sortOrder |
+| `modifierGroupIds` | array[int] | No | Active modifier group IDs owned by this vendor. Ordering in array is saved as the item's modifier sort order |
 | `hasDiscount` | boolean | No | Default: `false` |
 | `discountPercent` | float | No | 0-100. Required when hasDiscount=true |
 | `translations` | array | No | Array of translation objects |
@@ -519,7 +521,7 @@ Content-Type: application/json
 ```
 
 **Notes:**
-- `allergenIds`, `tagIds`, `modifierGroupIds` — providing these **replaces** the full set (sync behavior)
+- `modifierGroupIds` — providing this **replaces** the item's linked modifier groups (sync behavior). Omit it to leave existing links unchanged; send `[]` to clear them.
 - `translations` — updates existing translations by language code, keeps others untouched
 - `ingredients` — providing this **replaces** all ingredients
 - VAT is automatically recalculated if `taxCategoryId` changes

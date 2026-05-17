@@ -356,8 +356,8 @@ Returns profile info, recent restaurants, and loyalty overview.
 }
 ```
 
-- `monthly_orders`: number of orders placed by the authenticated customer in the current calendar month.
-- `orders_count`: total number of orders ever placed by the authenticated customer.
+- `monthly_orders`: number of paid, non-draft orders placed by the authenticated customer in the current calendar month.
+- `orders_count`: total number of paid, non-draft orders placed by the authenticated customer.
 
 ---
 
@@ -695,20 +695,35 @@ Returns all active menu categories across discoverable restaurants (deduplicated
     },
     "allergens": ["Gluten", "Eggs"],
     "tags": ["Popular", "Spicy"],
-    "modifier_groups": []
+    "modifier_groups": [
+      {
+        "id": 1,
+        "name": "Choose your side",
+        "type": "single",
+        "is_required": true,
+        "min_selection": 1,
+        "max_selection": 1,
+        "options": [
+          { "id": 1, "name": "Fries", "price_adjustment": 0.00 },
+          { "id": 2, "name": "Onion Rings", "price_adjustment": 1.50 }
+        ]
+      }
+    ]
   }
 ]
 ```
 
 
 **Notes:**
-- Both `category_id` and `search` are optional. If omitted, all active menu items are returned.
+- Both `category_id` and `search` are optional. If omitted, all active and currently available menu items are returned.
+- The restaurant must be live/discoverable (`vendor_settings.is_live_and_discoverable = true`); hidden restaurants return 404 for menu, menu item detail, categories, tables, reviews, and about endpoints.
 - `popularity_rank` is computed from `ordered_count` (e.g. `4` = "#4 most liked").
 - `rating` is a percentage-style approval score (e.g. `88%` with `252` reviews).
 - `discount_percent` and `discounted_price` are only present when `has_discount` is `true`.
 - `vat_amount` is calculated per unit from the effective price (`discounted_price` when discounted, otherwise `price`) multiplied by `vat_rate`.
 - Each item includes its `category` for grouping/display.
-- `paid_addons`, `free_addons`, and `removable_items` are the menu item's customization options configured by the vendor. These are separate from `modifier_groups`.
+- `paid_addons`, `free_addons`, and `removable_items` are legacy menu-item customization options configured directly on the item.
+- `modifier_groups` are reusable vendor-defined option groups attached to the item. Only active groups and options are returned.
 
 ---
 
@@ -777,7 +792,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 ```
 
 **Notes:**
-- `available` indicates if the item is currently in stock.
+- Only active and currently available items are returned by this endpoint; unavailable items return 404.
 - `ingredients` is a list of ingredient names (from the JSON column).
 - `fat`, `carbs`, `protein` are in grams; `null` if not set.
 - `dietary_preference` can be `vegetarian`, `vegan`, `gluten_free`, etc. or `null`.
@@ -860,7 +875,7 @@ Returns all public (non-flagged) reviews for a restaurant, with reviewer info an
 
 **Notes:**
 - Only non-flagged reviews are returned.
-- `menu_items` is derived live from `cart_items` linked to the review's order (`table_scan_session_id` ownership plus any shared `order_ids`). Each entry includes the item `name`, `quantity` ordered, and — when the vendor still has a matching menu item — its `id`, `slug`, and `image_url`. `id`, `name`, `slug`, and `image_url` are `null` if the menu item can no longer be resolved.
+- `menu_items` is derived from `cart_items` linked to the review's paid order: owned rows where `cart_items.order_id` matches the review order, plus shared rows whose `shared_order_ids` include that order ID. Each entry includes the item `name`, `quantity` ordered, and — when the vendor still has a matching menu item — its `id`, `slug`, and `image_url`. `id`, `name`, `slug`, and `image_url` are `null` if the menu item can no longer be resolved.
 - `images` is an array of image URLs uploaded by the reviewer (may be empty).
 - `reviewer.name` falls back to `"Anonymous"` if the customer has no name set.
 - `review_summary` is computed across **all** non-flagged reviews for this restaurant — it is independent of the `rating`, `with_images`, and pagination filters, so the breakdown stays stable while the user filters the list.
@@ -1184,7 +1199,7 @@ with HTTP `422`.
 
 **GET** `/api/customer/cart`
 
-Returns all visible cart items per person at the same table. Draft orders do **not** hide cart rows: items remain visible while the customer is still reviewing or sharing a draft. Cart items are excluded only after they belong to a confirmed-or-later order — specifically, items whose `order_ids` include a confirmed-or-later order ID **or** items that existed at or before the session's latest confirmed-or-later order was created. Newly added items after confirmation appear in the cart again.
+Returns all visible open cart items per person at the same table. Draft orders do **not** bind or hide cart rows: items remain visible while the customer is still reviewing or sharing a draft. When an order is confirmed, the customer's open cart rows are bound to that order through `cart_items.order_id` and disappear from the open cart. Newly added items after confirmation stay open (`order_id = null`) until the customer confirms the open order again or starts/confirms a new order after payment.
 
 **Response (200):**
 ```json
@@ -1215,6 +1230,19 @@ Returns all visible cart items per person at the same table. Draft orders do **n
           ],
           "free_addons": ["Ketchup"],
           "removed_items": ["Salt"],
+          "selected_modifiers": [
+            {
+              "modifier_group_id": 1,
+              "name": "Choose your side",
+              "type": "single",
+              "is_required": true,
+              "min_selection": 1,
+              "max_selection": 1,
+              "options": [
+                { "id": 2, "name": "Onion Rings", "price_adjustment": 1.50 }
+              ]
+            }
+          ],
           "vat_amount": 2.00,
           "line_total": 10.00,
           "menu_item": {
@@ -1256,7 +1284,13 @@ Adds an item to the authenticated customer's cart. If the same `menu_item_id` al
     { "name": "Cheese sauce" }
   ],
   "free_addons": ["Ketchup"],
-  "removed_items": ["Salt"]
+  "removed_items": ["Salt"],
+  "selected_modifiers": [
+    {
+      "modifier_group_id": 1,
+      "option_ids": [2]
+    }
+  ]
 }
 ```
 
@@ -1267,12 +1301,13 @@ Adds an item to the authenticated customer's cart. If the same `menu_item_id` al
 - `paid_addons`: optional array of selected paid add-on objects. Each object must include `name`; submitted prices are ignored and replaced with the vendor-configured price for that menu item.
 - `free_addons`: optional array of selected free add-on names.
 - `removed_items`: optional array of selected removed item names. `removable_items` is still accepted for backward compatibility.
+- `selected_modifiers`: optional array of selected modifier groups. Each entry accepts `modifier_group_id` and `option_ids`. `modifiers` is also accepted as an alias. Selected groups must be attached to the menu item, options must belong to the group, and required/min/max group rules are enforced.
 
 **Behavior:**
 - If a cart item with the same `menu_item_id` already exists for the customer's active `table_scan_session`, the existing item's quantity is incremented by the requested amount (default `1`). The existing item is returned.
-- A cart item is only merged with an existing row when `menu_item_id`, `paid_addons`, `free_addons`, and `removed_items` all match. Different customization choices create separate cart rows.
+- A cart item is only merged with an existing row when `menu_item_id`, `paid_addons`, `free_addons`, `removed_items`, and `selected_modifiers` all match. Different customization choices create separate cart rows.
 - Selected customization options must exist on the menu item. Invalid selections return `422`.
-- Paid add-on prices are included in `price`, `line_total`, order draft totals, and payment totals.
+- Paid add-on prices and selected modifier `price_adjustment` values are included in `price`, `line_total`, order draft totals, and payment totals.
 - If no matching cart item exists, a new one is created.
 
 **Response (201):**
@@ -1287,6 +1322,19 @@ Adds an item to the authenticated customer's cart. If the same `menu_item_id` al
   ],
   "free_addons": ["Ketchup"],
   "removed_items": ["Salt"],
+  "selected_modifiers": [
+    {
+      "modifier_group_id": 1,
+      "name": "Choose your side",
+      "type": "single",
+      "is_required": true,
+      "min_selection": 1,
+      "max_selection": 1,
+      "options": [
+        { "id": 2, "name": "Onion Rings", "price_adjustment": 1.50 }
+      ]
+    }
+  ],
   "vat_amount": 2.00,
   "line_total": 10.00,
   "menu_item": {
@@ -1434,7 +1482,7 @@ Returns a payment-ready snapshot of the authenticated customer's current table:
 
 **POST** `/api/customer/table/order/draft`
 
-Creates a `draft` order for the authenticated customer. The amount is computed live from the customer's owned `cart_items` (sum of `unit_price × quantity`, divided by `1 + count(order_ids)` per shared item). No item snapshot is stored on the order; the live `cart_items` are the source of truth.
+Creates a `draft` order for the authenticated customer's active table session. The amount is computed from the customer's currently open owned `cart_items` (`order_id = null`) plus any selected shared items. If the customer already has an unpaid draft for this active session, the draft amount is refreshed instead of creating another draft. If the latest unpaid order for this active session is already confirmed, this endpoint returns the table view without creating a new order; added open items are bound only when confirm is called again.
 
 **Authentication:** required (Bearer token).
 
@@ -1479,8 +1527,8 @@ Share or unshare a `cart_item` for the caller's draft order. At least one of `sh
 ```
 
 **Validation:**
-- `shared_item`: nullable integer. ID of a `cart_item` belonging to **another** customer at the same table. The caller's `order_id` is appended to that cart_item's `order_ids` array (deduplicated). When the order is confirmed, this item contributes a share to the total amount.
-- `unshared_item`: nullable integer. ID of a `cart_item` at the same table. The caller's `order_id` is removed from that cart_item's `order_ids` array. If the caller was not sharing this item, the operation is a silent no-op.
+- `shared_item`: nullable integer. ID of a `cart_item` belonging to **another** customer at the same table. The caller's `order_id` is appended to that cart_item's `shared_order_ids` array (deduplicated). When the order is confirmed, this item contributes a share to the total amount.
+- `unshared_item`: nullable integer. ID of a `cart_item` at the same table. The caller's `order_id` is removed from that cart_item's `shared_order_ids` array. If the caller was not sharing this item, the operation is a silent no-op.
 - At least one of `shared_item` or `unshared_item` must be present.
 
 **Response (200):** unified table-view payload — see [§4.1 Get Current Table History](#41-get-current-table-history) for the full shape.
@@ -1526,7 +1574,7 @@ Share or unshare a `cart_item` for the caller's draft order. At least one of `sh
 
 **POST** `/api/customer/table/order/confirmed`
 
-Confirms the authenticated customer's most recent draft order. **No request body is accepted.** The endpoint recomputes the final `amount` from the live `cart_items` table and updates the order to `status = "confirmed"`.
+Confirms the authenticated customer's open order for the active table session. **No request body is accepted.** The endpoint recomputes the final `amount`, updates the order to `status = "confirmed"`, and binds currently open owned cart rows to that order by setting `cart_items.order_id`.
 
 **Authentication:** required (Bearer token).
 
@@ -1535,9 +1583,9 @@ Confirms the authenticated customer's most recent draft order. **No request body
 {}
 ```
 
-**Total computation (live from `cart_items`):**
-1. **Owned items** — every `cart_item` whose `table_scan_session_id` is the caller's own session contributes `(unit_price × quantity) / (1 + count(order_ids))`.
-2. **Shared-into items** — every `cart_item` whose `order_ids` JSON array contains this order's id (and whose session is *not* the caller's) contributes the same per-share amount.
+**Total computation (from `cart_items`):**
+1. **Owned items** — every already-bound row where `cart_items.order_id = O.id`, plus currently open rows for the caller's active session during confirmation, contributes `(unit_price × quantity) / (1 + count(shared_order_ids))`.
+2. **Shared-into items** — every `cart_item` whose `shared_order_ids` JSON array contains this order's id (and whose session is *not* the caller's) contributes the same per-share amount.
 
 The final amount is rounded to 2 decimals.
 
@@ -1566,7 +1614,7 @@ The final amount is rounded to 2 decimals.
 
 **GET** `/api/customer/table/history`
 
-Returns the unified table-view payload — table + vendor + session metadata, every active session at the same table, and the latest order each person has placed (with per-item bill-split detail derived live from `cart_items`). Each person returns a single `order` object (the most recent order matching that session and table), or `null` if no order exists.
+Returns the unified table-view payload — table + vendor + session metadata, every active session at the same table, and the latest order each person has placed. Draft orders show the customer's currently open cart rows; confirmed-or-later orders show rows bound through `cart_items.order_id` plus shared rows from `shared_order_ids`. Each person returns a single `order` object (the most recent order matching that session and table), or `null` if no order exists.
 
 This is the **canonical "table view" response** — it is also returned (with the same shape) by [§3.15](#315-create-order-draft-), [§3.16](#316-update-order-), and [§3.17](#317-create-order-confirmed-).
 
@@ -1642,6 +1690,19 @@ This is the **canonical "table view" response** — it is also returned (with th
             ],
             "free_addons": ["Ketchup"],
             "removed_items": ["Salt"],
+            "selected_modifiers": [
+              {
+                "modifier_group_id": 1,
+                "name": "Choose your side",
+                "type": "single",
+                "is_required": true,
+                "min_selection": 1,
+                "max_selection": 1,
+                "options": [
+                  { "id": 2, "name": "Onion Rings", "price_adjustment": 1.50 }
+                ]
+              }
+            ],
             "vat_rate": 20,
             "tax_category": "food",
             "vat_amount": 2.00,
@@ -1693,12 +1754,12 @@ This is the **canonical "table view" response** — it is also returned (with th
 | `menu_item_id` | int | The menu item this cart entry references. |
 | `name`, `image_url` | string\|null | Cached from `menu_items`. |
 | `quantity` | int | Cart quantity. |
-| `unit_price` | float | Per-unit price, including selected paid add-ons. |
-| `paid_addons`, `free_addons`, `removed_items` | array | Selected customization options for this cart item. |
+| `unit_price` | float | Per-unit price, including selected paid add-ons and selected modifier price adjustments. |
+| `paid_addons`, `free_addons`, `removed_items`, `selected_modifiers` | array | Selected customization options for this cart item. |
 | `vat_rate`, `tax_category`, `vat_amount` | float/string | Tax fields from the menu item. `vat_amount` is `line_total × vat_rate / 100`. |
 | `line_total` | float | `unit_price × quantity`. |
 | `is_mine` | bool | `true` if the cart_item belongs to the caller's own session. |
-| `shared_between` | int | `1 + count(order_ids)`. The number of orders splitting this item (owner + sharers). |
+| `shared_between` | int | `1 + count(shared_order_ids)`. The number of orders splitting this item (owner + sharers). |
 | `shared_with` | object[] | The orders that share this item with the owner. Each entry: `order_id`, `customer_id`, `customer_name`. Empty array if unshared. |
 | `my_share` | float | `line_total / shared_between` — what each participating order contributes. |
 | `status` | string\|null | Per-item status derived from timestamps: `Served` when `served_at` is set, `Ready` when `ready_at` is set, `Preparing` when `preparing_start_at` is set, otherwise `null`. |
@@ -1706,11 +1767,11 @@ This is the **canonical "table view" response** — it is also returned (with th
 
 **Item-set rule for an order:**
 For a given order `O` in the response, an item appears in its `items[]` if either:
-- (a) the cart_item's session is the order's customer's session (owned), or
-- (b) the cart_item's `order_ids` contains `O.id` (shared-into).
+- (a) `cart_items.order_id = O.id` for confirmed-or-later orders, or `cart_items.order_id IS NULL` for the session's current draft order, or
+- (b) the cart_item's `shared_order_ids` contains `O.id` (shared-into).
 
 **Notes:**
-- The columns `items_count`, `items`, `shared_items`, `ready_at`, `picked_up_at`, and `guest_count` no longer exist on `orders`. Per-item state lives on `cart_items` (`order_ids`, `preparing_start_at`, `ready_at`, `served_at`); per-order amount is recomputed live on confirm.
+- The columns `items_count`, `items`, `shared_items`, `ready_at`, `picked_up_at`, and `guest_count` no longer exist on `orders`. Per-item state lives on `cart_items` (`order_id`, `shared_order_ids`, `preparing_start_at`, `ready_at`, `served_at`); per-order amount is recomputed on confirm.
 - `name` falls back to `"Guest"` if the customer has no name set.
 
 **Response (422) — no active table session:**
@@ -1950,7 +2011,7 @@ Creates a Stripe PaymentIntent for the authenticated customer's order. This endp
 - Validates that `customer_id` matches the authenticated customer.
 - Validates that the order belongs to the authenticated customer.
 - Derives `table_session_id` from `orders.table_scan_session_id`; the frontend does not send it.
-- Recalculates the final payable amount from `cart_items` for table orders, then updates `orders.amount`.
+- Recalculates the final payable amount from cart rows already bound to the table order through `cart_items.order_id` plus shared rows in `shared_order_ids`, then updates `orders.amount`.
 - Requires the restaurant's `vendor_settings` to have Stripe enabled, a `stripe_account_id`, and completed onboarding.
 - Creates a platform PaymentIntent with `transfer_data.destination` set to the vendor Stripe account ID.
 - Stores an `order_payments` row for audit and webhook reconciliation.
@@ -2097,7 +2158,7 @@ Receives Stripe PaymentIntent events and keeps `order_payments` and `orders` in 
 - `orders` stores current customer-facing payment flags and Stripe transaction ID.
 - `order_payments` stores PaymentIntent audit/reconciliation data.
 - `table_scan_sessions` links dine-in orders to the customer session.
-- `cart_items` is used for backend-side amount calculation.
+- `cart_items.order_id` links owned item rows to the order; `cart_items.shared_order_ids` links shared item rows to participant orders.
 - `vendor_settings` provides the vendor Stripe Connect account ID.
 
 ---
@@ -2427,7 +2488,7 @@ Removes the given restaurant from the authenticated customer's favorites.
 - `vendor_public_id`: required, must identify an existing vendor
 - `rating`: required, integer, 1–5
 - `review`: nullable, string, max 2000
-- Customer must have at least one order with the vendor
+- Customer must have at least one paid, non-draft order with the vendor
 - One review per customer/vendor
 
 ---

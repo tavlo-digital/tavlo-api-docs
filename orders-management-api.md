@@ -218,7 +218,7 @@ Records that cash payment has been received. Sets `paymentReceived → true`, `p
 
 ### `PATCH /api/orders/{orderId}/ready`
 
-Marks the order as ready for pickup or serving. Sets `status → ready` and stamps `cart_items.ready_at = now()` on every cart_item linked to this order (owned by the order's session, plus any cart_item whose `order_ids` JSON contains the order's id). The order-level `readyAt` returned in the response is the latest such timestamp once *every* linked cart_item has been marked ready; otherwise `null`.
+Marks the order as ready for pickup or serving. Sets `status → ready` and stamps `cart_items.ready_at = now()` on every cart_item linked to this order (owned by the order's session, plus any cart_item whose `shared_order_ids` JSON contains the order's id). The order-level `readyAt` returned in the response is the latest such timestamp once *every* linked cart_item has been marked ready; otherwise `null`.
 
 **Request Body:** none
 
@@ -430,7 +430,7 @@ This legacy endpoint sets `status → closed` and records `closedAt` on the requ
 
 **Notes:**
 - `itemsCount` is computed live as the sum of `quantity` across linked cart_items.
-- `items[]` is built live from `cart_items` (owned by the order's session, plus any cart_item whose `order_ids` JSON contains the order id).
+- `items[]` is built live from `cart_items` (owned by the order's session, plus any cart_item whose `shared_order_ids` JSON contains the order id).
 - Item `status` is derived from `served_at`, `ready_at`, and `preparing_start_at`: `served`, `ready`, `in_progress`, or `new`.
 - `readyAt` reflects the order-level rollup (latest timestamp once *all* linked cart_items have `ready_at` set). The per-item `readyAt` is the canonical value.
 - `pickedUpAt` and `guestCount` are no longer returned — both columns were dropped from `orders`.
