@@ -365,17 +365,28 @@ Returns profile info, recent restaurants, and loyalty overview.
 
 **PATCH / PUT** `/api/customer/profile` 🔒
 
-**Body (all optional):**
+**JSON body (all optional):**
 ```json
 {
   "first_name": "Sara",
   "last_name": "Khan",
   "gender": "male",
   "date_of_birth": "1990-01-15",
-  "address": "123 Main Street, Vienna",
-  "profile_picture": "http://localhost:8000/media/customers/1/avatar/abc123.jpg"
+  "address": "123 Main Street, Vienna"
 }
 ```
+
+**Multipart body (all optional):**
+Use `multipart/form-data` when uploading a new profile image. Send the file using the same `profile_picture` field name:
+
+| Field | Type | Notes |
+|---|---|---|
+| `first_name` | string | Optional |
+| `last_name` | string | Optional |
+| `gender` | string | Optional: `male`, `female`, `other`, `prefer_not_to_say` |
+| `date_of_birth` | date | Optional, before today |
+| `address` | string | Optional |
+| `profile_picture` | file | Optional image file. Backend stores it and returns the generated public URL. |
 
 **Validation:**
 - `first_name`: nullable, string, max 255
@@ -383,7 +394,15 @@ Returns profile info, recent restaurants, and loyalty overview.
 - `gender`: nullable, in: `male`, `female`, `other`, `prefer_not_to_say`
 - `date_of_birth`: nullable, date, before today
 - `address`: nullable, string, max 500
-- `profile_picture`: nullable, string, max 500
+- `profile_picture`: nullable. For multipart uploads: image file (`jpg`, `jpeg`, `png`, `webp`), max 4MB. For JSON/backward compatibility: string URL/path, max 500.
+
+**Profile picture behavior:**
+- If `profile_picture` is sent as a file, the backend stores it under the customer avatar media directory and saves the stored path.
+- Responses return `profile_picture` as an absolute `/media/...` URL.
+- Do not send a generated URL for new uploads. Send the image file in `multipart/form-data`.
+- Sending a string URL/path in JSON is only supported for backward compatibility.
+- If `profile_picture` is omitted, the current picture is unchanged.
+- If `profile_picture` is sent as `null`, the picture value is cleared.
 
 **Response (200):**
 ```json
@@ -682,6 +701,9 @@ Returns all active menu categories across discoverable restaurants (deduplicated
     "ordered_count": 1200,
     "popularity_rank": 4,
     "calories": 680,
+    "fat": 32.50,
+    "carbs": 45.00,
+    "protein": 38.00,
     "dietary_preference": null,
     "paid_addons": [
       { "name": "Extra cheese", "price": 1.50 }
@@ -998,7 +1020,7 @@ d5938525-f2a5-4849-803e-d579582af11f
     "scannedAt": "2026-04-23T10:15:00+00:00"
   },
   "table": { "id": "5", "number": 3, "name": "T3" },
-  "vendor": { "id": "VID-8492", "name": "Bella Italia" }
+  "vendor": { "id": "VID-8492", "name": "Bella Italia", "currency": "EUR" }
 }
 ```
 
@@ -1015,7 +1037,7 @@ d5938525-f2a5-4849-803e-d579582af11f
     "scannedAt": "2026-04-23T10:15:00+00:00"
   },
   "table": { "id": "5", "number": 3, "name": "T3" },
-  "vendor": { "id": "VID-8492", "name": "Bella Italia" }
+  "vendor": { "id": "VID-8492", "name": "Bella Italia", "currency": "EUR" }
 }
 ```
 
@@ -1032,7 +1054,7 @@ d5938525-f2a5-4849-803e-d579582af11f
     "scannedAt": "2026-04-23T10:15:00+00:00"
   },
   "table": { "id": "5", "number": 3, "name": "T3" },
-  "vendor": { "id": "VID-8492", "name": "Bella Italia" }
+  "vendor": { "id": "VID-8492", "name": "Bella Italia", "currency": "EUR" }
 }
 ```
 
@@ -1085,7 +1107,7 @@ When a table is already active, another customer can join that same table flow b
     "scannedAt": "2026-04-23T10:17:00+00:00"
   },
   "table": { "id": "5", "number": 3, "name": "T3" },
-  "vendor": { "id": "VID-8492", "name": "Bella Italia" }
+  "vendor": { "id": "VID-8492", "name": "Bella Italia", "currency": "EUR" }
 }
 ```
 
@@ -1107,7 +1129,7 @@ When a table is already active, another customer can join that same table flow b
     "scannedAt": "2026-04-23T10:17:00+00:00"
   },
   "table": { "id": "5", "number": 3, "name": "T3" },
-  "vendor": { "id": "VID-8492", "name": "Bella Italia" }
+  "vendor": { "id": "VID-8492", "name": "Bella Italia", "currency": "EUR" }
 }
 ```
 
@@ -1160,7 +1182,7 @@ Closes the authenticated customer's active table scan session for the given rest
     "closedAt": "2026-04-23T11:42:00+00:00"
   },
   "table": { "id": "5", "number": 3, "name": "T3" },
-  "vendor": { "id": "V-ABC123", "name": "Bella Italia" }
+  "vendor": { "id": "V-ABC123", "name": "Bella Italia", "currency": "EUR" }
 }
 ```
 
@@ -1614,7 +1636,7 @@ The final amount is rounded to 2 decimals.
 
 **GET** `/api/customer/table/history`
 
-Returns the unified table-view payload — table + vendor + session metadata, every active session at the same table, and the latest order each person has placed. Draft orders show the customer's currently open cart rows; confirmed-or-later orders show rows bound through `cart_items.order_id` plus shared rows from `shared_order_ids`. Each person returns a single `order` object (the most recent order matching that session and table), or `null` if no order exists.
+Returns the unified table-view payload — table + vendor + session metadata, every active session at the same table, and every order each person has placed in their active table session. Draft orders show the customer's currently open cart rows; confirmed-or-later orders show rows bound through `cart_items.order_id` plus shared rows from `shared_order_ids`. Each person returns `order` as an array containing all matching orders for that same `session_id`; it is an empty array when no order exists.
 
 This is the **canonical "table view" response** — it is also returned (with the same shape) by [§3.15](#315-create-order-draft-), [§3.16](#316-update-order-), and [§3.17](#317-create-order-confirmed-).
 
@@ -1649,94 +1671,96 @@ This is the **canonical "table view" response** — it is also returned (with th
       "status": "active",
       "orders_count": 1,
       "total_amount": 16.49,
-      "order": {
-        "id": 42,
-        "order_public_id": "ord-aB3xK9pQrS12",
-        "customer_id": 7,
-        "vendor_id": 1,
-        "table_scan_session_id": 12,
-        "status": "confirmed",
-        "amount": 16.49,
-        "currency": "EUR",
-        "order_number": null,
-        "order_type": "dine-in",
-        "table_number": "3",
-        "service_fee": 0.00,
-        "vat_amount": 0.00,
-        "course": null,
-        "payment_method": null,
-        "payment_pending": true,
-        "payment_received": false,
-        "payment_confirmed_at": null,
-        "payment_note": null,
-        "transaction_id": null,
-        "served_at": null,
-        "cancelled_at": null,
-        "cancelled_reason": null,
-        "waiter_confirmed": false,
-        "waiter_confirmed_at": null,
-        "created_at": "2026-04-27T10:30:00+00:00",
-        "updated_at": "2026-04-27T10:31:00+00:00",
-        "items": [
-          {
-            "cart_item_id": 1,
-            "menu_item_id": 42,
-            "name": "Fries",
-            "image_url": null,
-            "quantity": 2,
-            "unit_price": 5.00,
-            "paid_addons": [
-              { "name": "Cheese sauce", "price": 1.50 }
-            ],
-            "free_addons": ["Ketchup"],
-            "removed_items": ["Salt"],
-            "selected_modifiers": [
-              {
-                "modifier_group_id": 1,
-                "name": "Choose your side",
-                "type": "single",
-                "is_required": true,
-                "min_selection": 1,
-                "max_selection": 1,
-                "options": [
-                  { "id": 2, "name": "Onion Rings", "price_adjustment": 1.50 }
-                ]
-              }
-            ],
-            "vat_rate": 20,
-            "tax_category": "food",
-            "vat_amount": 2.00,
-            "line_total": 10.00,
-            "is_mine": true,
-            "shared_between": 1,
-            "shared_with": [],
-            "my_share": 10.00,
-            "status": "Preparing",
-            "preparing_start_at": "2026-04-27T10:31:00+00:00",
-            "ready_at": null,
-            "served_at": null
-          },
-          {
-            "cart_item_id": 3,
-            "menu_item_id": 51,
-            "name": "Pizza",
-            "image_url": null,
-            "quantity": 1,
-            "unit_price": 18.99,
-            "line_total": 18.99,
-            "is_mine": false,
-            "shared_between": 2,
-            "shared_with": [
-              { "order_id": 101, "customer_id": 9, "customer_name": "Bob Jones" }
-            ],
-            "my_share": 9.50,
-            "status": "Ready",
-            "preparing_start_at": "2026-04-27T10:32:00+00:00",
-            "ready_at": "2026-04-27T10:42:00+00:00",
-            "served_at": null
-          }
-        ]
-      }
+      "order": [
+        {
+          "id": 42,
+          "order_public_id": "ord-aB3xK9pQrS12",
+          "customer_id": 7,
+          "vendor_id": 1,
+          "table_scan_session_id": 12,
+          "status": "confirmed",
+          "amount": 16.49,
+          "currency": "EUR",
+          "order_number": null,
+          "order_type": "dine-in",
+          "table_number": "3",
+          "service_fee": 0.00,
+          "vat_amount": 0.00,
+          "course": null,
+          "payment_method": null,
+          "payment_pending": true,
+          "payment_received": false,
+          "payment_confirmed_at": null,
+          "payment_note": null,
+          "transaction_id": null,
+          "served_at": null,
+          "cancelled_at": null,
+          "cancelled_reason": null,
+          "waiter_confirmed": false,
+          "waiter_confirmed_at": null,
+          "created_at": "2026-04-27T10:30:00+00:00",
+          "updated_at": "2026-04-27T10:31:00+00:00",
+          "items": [
+            {
+              "cart_item_id": 1,
+              "menu_item_id": 42,
+              "name": "Fries",
+              "image_url": null,
+              "quantity": 2,
+              "unit_price": 5.00,
+              "paid_addons": [
+                { "name": "Cheese sauce", "price": 1.50 }
+              ],
+              "free_addons": ["Ketchup"],
+              "removed_items": ["Salt"],
+              "selected_modifiers": [
+                {
+                  "modifier_group_id": 1,
+                  "name": "Choose your side",
+                  "type": "single",
+                  "is_required": true,
+                  "min_selection": 1,
+                  "max_selection": 1,
+                  "options": [
+                    { "id": 2, "name": "Onion Rings", "price_adjustment": 1.50 }
+                  ]
+                }
+              ],
+              "vat_rate": 20,
+              "tax_category": "food",
+              "vat_amount": 2.00,
+              "line_total": 10.00,
+              "is_mine": true,
+              "shared_between": 1,
+              "shared_with": [],
+              "my_share": 10.00,
+              "status": "Preparing",
+              "preparing_start_at": "2026-04-27T10:31:00+00:00",
+              "ready_at": null,
+              "served_at": null
+            },
+            {
+              "cart_item_id": 3,
+              "menu_item_id": 51,
+              "name": "Pizza",
+              "image_url": null,
+              "quantity": 1,
+              "unit_price": 18.99,
+              "line_total": 18.99,
+              "is_mine": false,
+              "shared_between": 2,
+              "shared_with": [
+                { "order_id": 101, "customer_id": 9, "customer_name": "Bob Jones" }
+              ],
+              "my_share": 9.50,
+              "status": "Ready",
+              "preparing_start_at": "2026-04-27T10:32:00+00:00",
+              "ready_at": "2026-04-27T10:42:00+00:00",
+              "served_at": null
+            }
+          ]
+        }
+      ]
     }
   ],
   "summary": {
@@ -1766,11 +1790,12 @@ This is the **canonical "table view" response** — it is also returned (with th
 | `preparing_start_at`, `ready_at`, `served_at` | ISO8601\|null | Per-item preparation/service timestamps (set by the vendor flow). |
 
 **Item-set rule for an order:**
-For a given order `O` in the response, an item appears in its `items[]` if either:
+For a given order `O` in `people[].order[]`, an item appears in its `items[]` if either:
 - (a) `cart_items.order_id = O.id` for confirmed-or-later orders, or `cart_items.order_id IS NULL` for the session's current draft order, or
 - (b) the cart_item's `shared_order_ids` contains `O.id` (shared-into).
 
 **Notes:**
+- `people[].order` is ordered oldest-to-newest by `created_at`, then `id`, and is always an array.
 - The columns `items_count`, `items`, `shared_items`, `ready_at`, `picked_up_at`, and `guest_count` no longer exist on `orders`. Per-item state lives on `cart_items` (`order_id`, `shared_order_ids`, `preparing_start_at`, `ready_at`, `served_at`); per-order amount is recomputed on confirm.
 - `name` falls back to `"Guest"` if the customer has no name set.
 
