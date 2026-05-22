@@ -1636,7 +1636,7 @@ The final amount is rounded to 2 decimals.
 
 **GET** `/api/customer/table/history`
 
-Returns the unified table-view payload — table + vendor + session metadata, every active session at the same table, and every order each person has placed in their active table session. Draft orders show the customer's currently open cart rows; confirmed-or-later orders show rows bound through `cart_items.order_id` plus shared rows from `shared_order_ids`. Each person returns `order` as an array containing all matching orders for that same `session_id`; it is an empty array when no order exists.
+Returns the unified table-view payload — table + vendor + session metadata, every active session at the same table, and every order each person has placed in their active table session. Draft orders show the customer's currently open cart rows; confirmed-or-later orders show rows bound through `cart_items.order_id` plus shared rows from `shared_order_ids`. Each person returns `orders` as an array containing all matching orders for that same `session_id`; it is an empty array when no order exists.
 
 This is the **canonical "table view" response** — it is also returned (with the same shape) by [§3.15](#315-create-order-draft-), [§3.16](#316-update-order-), and [§3.17](#317-create-order-confirmed-).
 
@@ -1671,7 +1671,7 @@ This is the **canonical "table view" response** — it is also returned (with th
       "status": "active",
       "orders_count": 1,
       "total_amount": 16.49,
-      "order": [
+      "orders": [
         {
           "id": 42,
           "order_public_id": "ord-aB3xK9pQrS12",
@@ -1790,12 +1790,12 @@ This is the **canonical "table view" response** — it is also returned (with th
 | `preparing_start_at`, `ready_at`, `served_at` | ISO8601\|null | Per-item preparation/service timestamps (set by the vendor flow). |
 
 **Item-set rule for an order:**
-For a given order `O` in `people[].order[]`, an item appears in its `items[]` if either:
+For a given order `O` in `people[].orders[]`, an item appears in its `items[]` if either:
 - (a) `cart_items.order_id = O.id` for confirmed-or-later orders, or `cart_items.order_id IS NULL` for the session's current draft order, or
 - (b) the cart_item's `shared_order_ids` contains `O.id` (shared-into).
 
 **Notes:**
-- `people[].order` is ordered oldest-to-newest by `created_at`, then `id`, and is always an array.
+- `people[].orders` is ordered oldest-to-newest by `created_at`, then `id`, and is always an array.
 - The columns `items_count`, `items`, `shared_items`, `ready_at`, `picked_up_at`, and `guest_count` no longer exist on `orders`. Per-item state lives on `cart_items` (`order_id`, `shared_order_ids`, `preparing_start_at`, `ready_at`, `served_at`); per-order amount is recomputed on confirm.
 - `name` falls back to `"Guest"` if the customer has no name set.
 
