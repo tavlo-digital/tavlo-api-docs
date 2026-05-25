@@ -982,7 +982,91 @@ Returns the public "About" profile for a restaurant — vanity stats, features, 
 
 ---
 
-### 3.10 Scan Table QR (Create Session) 🔒
+### 3.9.1 Get Restaurant Languages
+
+**GET** `/api/customer/restaurants/{vendorPublicId}/languages`
+
+Returns the restaurant's default menu language, customer-facing languages, date format, and time format enabled by the vendor in settings.
+
+**Authentication:** public route; no Bearer token required.
+
+**Request body:** none.
+
+**Response (200):**
+```json
+{
+  "vendor": { "id": "VID-8492", "name": "Bella Italia" },
+  "default_language": "de",
+  "available_languages": ["de", "en", "it"],
+  "date_format": "DD.MM.YYYY",
+  "time_format": "24h",
+  "languages": [
+    { "code": "de", "name": "Deutsch (German)", "is_default": true },
+    { "code": "en", "name": "English", "is_default": false },
+    { "code": "it", "name": "Italiano (Italian)", "is_default": false }
+  ]
+}
+```
+
+**Notes:**
+- `default_language` comes from `vendor_settings.default_language`.
+- `available_languages` comes from `vendor_settings.supported_languages`.
+- `date_format` comes from `vendor_settings.date_format`.
+- `time_format` comes from `vendor_settings.time_format`.
+- The default language is always included first in `available_languages`, even if it is missing from `supported_languages`.
+
+**Response (404):**
+```json
+{ "message": "No query results for model [App\\Models\\Vendor]." }
+```
+
+---
+
+### 3.10 Get Table Status
+
+**GET** `/api/customer/table/status?token=d5938525-f2a5-4849-803e-d579582af11f`
+
+Checks the current table state before calling the table scan endpoint.
+
+**Authentication:** public route; no Bearer token required.
+
+**Request body:** none.
+
+**Query parameters:**
+- `token` — QR token from the scanned table link (string, required).
+
+**Response (200):**
+```json
+{
+  "table": { "id": "5", "number": 3, "name": "T3" },
+  "vendor": { "id": "VID-8492", "name": "Bella Italia" },
+  "status": "active"
+}
+```
+
+**Status values:**
+- `available` — the table has no active scan session.
+- `draft` — the table has active scan session(s), but no cart items have been added.
+- `active` — the table has active scan session(s) and at least one cart item.
+
+**Response (410) — invalid / inactive QR token:**
+```json
+{ "message": "This QR code is no longer valid" }
+```
+
+**Response (422) — missing token:**
+```json
+{
+  "message": "The token field is required.",
+  "errors": {
+    "token": ["The token field is required."]
+  }
+}
+```
+
+---
+
+### 3.11 Scan Table QR (Create Session) 🔒
 
 **POST** `/api/customer/table/scan`
 
@@ -1078,7 +1162,7 @@ d5938525-f2a5-4849-803e-d579582af11f
 
 ---
 
-### 3.11 Join Active Table With PIN 🔒
+### 3.12 Join Active Table With PIN 🔒
 
 **POST** `/api/customer/table/pin`
 
@@ -1100,7 +1184,7 @@ When a table is already active, another customer can join that same table flow b
   "message": "Joined table session",
   "status": "active",
   "requiresPin": false,
-  "pin": null,
+  "pin": "0473",
   "session": {
     "id": "13",
     "status": "active",
@@ -1113,7 +1197,8 @@ When a table is already active, another customer can join that same table flow b
 
 **Behavior:**
 - A new `table_scan_sessions` row is created for the joining customer.
-- The joining customer does **not** receive a new PIN, so `pin` is returned as `null`.
+- The entered `pin` is stored on the joining customer's `table_scan_sessions` row.
+- The joining customer receives the same PIN they entered in the response.
 - Repeating the same request for a customer who is already joined returns the existing active session instead of creating a duplicate row.
 
 **Response (200) — customer already joined:**
@@ -1122,7 +1207,7 @@ When a table is already active, another customer can join that same table flow b
   "message": "Already joined this table session",
   "status": "active",
   "requiresPin": false,
-  "pin": null,
+  "pin": "0473",
   "session": {
     "id": "13",
     "status": "active",
@@ -1150,25 +1235,24 @@ When a table is already active, another customer can join that same table flow b
 
 ---
 
-### 3.12 Close Table Session 🔒
+### 3.13 Close Own Table Session 🔒
 
 **POST** `/api/customer/table/close`
 
-Closes the authenticated customer's active table scan session for the given restaurant + table by setting `status = closed` and `closed_at = now()` on the matching `table_scan_sessions` row.
+Closes the authenticated customer's own active table scan session for the given table by setting `status = closed` and `closed_at = now()`. Other customers at the same table keep their sessions open.
 
 **Authentication:** required (Bearer token).
 
 **Body:**
 ```json
 {
-  "vendor_public_id": "V-ABC123",
   "table_id": 5
 }
 ```
 
 **Validation:**
-- `vendor_public_id`: required, string — the restaurant's `vendor_public_id`.
 - `table_id`: required, integer — the `restaurant_tables.id` for the table to close.
+- `vendor_public_id`: optional, string — still accepted for backward compatibility. When supplied, the active session must also belong to that restaurant.
 
 **Response (200):**
 ```json
@@ -1187,8 +1271,20 @@ Closes the authenticated customer's active table scan session for the given rest
 ```
 
 **Notes:**
-- Only the requesting customer's own active session at this exact `vendor_id` + `restaurant_table_id` is affected. Other people sitting at the same table keep their sessions open.
-- If the customer has no active session matching the supplied restaurant + table, the endpoint returns `422 No active table session found.`
+- Only the requesting customer's own active session at the supplied `restaurant_table_id` is affected.
+- If the customer has an unpaid, non-draft, non-cancelled order in that session, the session remains active. Draft orders do not block closing the session.
+- If the customer's orders are paid, every cart item attached to those orders must be served before the session can close. Attached items include rows with `cart_items.order_id = order.id` and shared rows whose `shared_order_ids` contain that order id.
+- If the customer has no active session matching the supplied table, the endpoint returns `422 No active table session found.`
+
+**Response (422) — unpaid order exists:**
+```json
+{ "message": "You have an active order for this table" }
+```
+
+**Response (422) — paid order has unserved items:**
+```json
+{ "message": "All the items on table are not served." }
+```
 
 **Response (422) — no active table session:**
 ```json
@@ -1202,7 +1298,7 @@ Closes the authenticated customer's active table scan session for the given rest
 
 ---
 
-### 3.13 Table Cart 🔒
+### 3.14 Table Cart 🔒
 
 A **table cart** is the live cart of every customer currently sitting at the same `restaurant_table`. It is automatically scoped to the authenticated customer's currently-active `table_scan_session`.
 
@@ -1217,7 +1313,7 @@ If the customer has no active session, every cart endpoint returns:
 ```
 with HTTP `422`.
 
-#### 3.13.1 Get Table Cart
+#### 3.14.1 Get Table Cart
 
 **GET** `/api/customer/cart`
 
@@ -1290,7 +1386,7 @@ Returns all visible open cart items per person at the same table. Draft orders d
 }
 ```
 
-#### 3.13.2 Add Item
+#### 3.14.2 Add Item
 
 **POST** `/api/customer/cart/items`
 
@@ -1371,7 +1467,7 @@ Adds an item to the authenticated customer's cart. If the same `menu_item_id` al
 }
 ```
 
-#### 3.13.3 Update Item
+#### 3.14.3 Update Item
 
 **PATCH** `/api/customer/cart/items/{id}`
 
@@ -1389,7 +1485,7 @@ Update quantity or notes on an item the customer owns.
 
 **Response (404):** if the item does not belong to the customer's current session.
 
-#### 3.13.4 Remove Item
+#### 3.14.4 Remove Item
 
 **DELETE** `/api/customer/cart/items/{id}`
 

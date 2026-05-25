@@ -70,6 +70,33 @@ Authorization: Bearer {token}
 
 ## 2. Menu Categories
 
+### GET `/api/vendor/menu/category-options`
+
+Returns the active master category list created by admins. Vendors select from this list when creating menu categories.
+
+**Request:**
+```
+GET /api/vendor/menu/category-options
+Authorization: Bearer {token}
+```
+
+**Response `200`:**
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Pizza",
+      "slug": "pizza",
+      "icon": "🍕",
+      "sortOrder": 0
+    }
+  ]
+}
+```
+
+---
+
 ### GET `/api/vendor/menu/categories`
 
 Returns all menu categories for the authenticated vendor.
@@ -86,8 +113,10 @@ Authorization: Bearer {token}
   "data": [
     {
       "id": 26,
+      "masterCategoryId": 1,
       "name": "Antipasti",
       "slug": "antipasti",
+      "icon": "🍽️",
       "taxCategory": {
         "id": 1,
         "slug": "food",
@@ -120,8 +149,10 @@ Authorization: Bearer {token}
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | integer | Category ID |
+| `masterCategoryId` | integer\|null | Admin master category selected by the vendor |
 | `name` | string | Category name |
 | `slug` | string | URL-safe slug |
+| `icon` | string\|null | Icon from the admin master category |
 | `taxCategory` | object\|null | Linked system tax category |
 | `taxCategory.id` | integer | Tax category ID (use for create/update) |
 | `taxCategory.slug` | string | Tax category slug |
@@ -147,7 +178,7 @@ Content-Type: application/json
 **Body:**
 ```json
 {
-  "name": "Drinks",
+  "masterCategoryId": 2,
   "taxCategoryId": 2
 }
 ```
@@ -155,7 +186,8 @@ Content-Type: application/json
 **Fields:**
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | **Yes** | Category name (max 255 chars) |
+| `masterCategoryId` | integer | **Yes** for the vendor UI | Active admin master category ID |
+| `name` | string | Legacy fallback | Category name (max 255 chars) when `masterCategoryId` is not sent |
 | `taxCategoryId` | integer | No | Tax category FK. Defaults to food rate for vendor's country |
 
 **Response `201`:**
@@ -163,8 +195,10 @@ Content-Type: application/json
 {
   "data": {
     "id": 35,
+    "masterCategoryId": 2,
     "name": "Drinks",
     "slug": "drinks",
+    "icon": "🥤",
     "taxCategory": {
       "id": 2,
       "slug": "beverage_non_alcoholic",
@@ -201,7 +235,7 @@ Content-Type: application/json
 **Body (all fields optional):**
 ```json
 {
-  "name": "Antipasti & Starters",
+  "masterCategoryId": 1,
   "taxCategoryId": 1,
   "sortOrder": 0,
   "isActive": true
