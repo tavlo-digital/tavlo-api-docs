@@ -497,15 +497,16 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 **Response (200):**
 ```json
 [
-  { "id": 1, "name": "Burger", "slug": "burger" },
-  { "id": 2, "name": "Pizza", "slug": "pizza" },
-  { "id": 3, "name": "Starters", "slug": "starters" }
+  { "id": 1, "name": "Burger", "slug": "burger", "icon": "http://localhost:8000/media/categories/burger.png" },
+  { "id": 2, "name": "Pizza", "slug": "pizza", "icon": "http://localhost:8000/media/categories/pizza.png" },
+  { "id": 3, "name": "Starters", "slug": "starters", "icon": null }
 ]
 ```
 
 **Notes:**
 - Only categories from restaurants with `is_live_and_discoverable = true` are included.
 - Categories are deduplicated by name and sorted alphabetically.
+- `icon` is the absolute URL of the category icon image, or `null` if no icon is set.
 - Use the `id` value as the `cuisine` filter param in List Restaurants.
 
 ---
@@ -664,10 +665,13 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 **Response (200):**
 ```json
 [
-  { "id": 1, "name": "Starters", "slug": "starters", "sort_order": 1 },
-  { "id": 2, "name": "Mains", "slug": "mains", "sort_order": 2 }
+  { "id": 1, "name": "Starters", "slug": "starters", "icon": "http://localhost:8000/media/categories/starters.png", "sort_order": 1 },
+  { "id": 2, "name": "Mains", "slug": "mains", "icon": null, "sort_order": 2 }
 ]
 ```
+
+**Notes:**
+- `icon` is the absolute URL of the category icon image, or `null` if no icon is set.
 
 ---
 
@@ -713,7 +717,8 @@ Returns all active menu categories across discoverable restaurants (deduplicated
     "category": {
       "id": 1,
       "name": "Burger",
-      "slug": "burger"
+      "slug": "burger",
+      "icon": "http://localhost:8000/media/categories/burger.png"
     },
     "allergens": ["Gluten", "Eggs"],
     "tags": ["Popular", "Spicy"],

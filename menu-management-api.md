@@ -88,7 +88,7 @@ Authorization: Bearer {token}
       "id": 1,
       "name": "Pizza",
       "slug": "pizza",
-      "icon": "🍕",
+      "icon": "https://api.example.com/media/cat-icons/pizza.png",
       "sortOrder": 0
     }
   ]
@@ -116,7 +116,7 @@ Authorization: Bearer {token}
       "masterCategoryId": 1,
       "name": "Antipasti",
       "slug": "antipasti",
-      "icon": "🍽️",
+      "icon": "https://api.example.com/media/cat-icons/antipasti.png",
       "taxCategory": {
         "id": 1,
         "slug": "food",
@@ -187,7 +187,6 @@ Content-Type: application/json
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `masterCategoryId` | integer | **Yes** for the vendor UI | Active admin master category ID |
-| `name` | string | Legacy fallback | Category name (max 255 chars) when `masterCategoryId` is not sent |
 | `taxCategoryId` | integer | No | Tax category FK. Defaults to food rate for vendor's country |
 
 **Response `201`:**
@@ -198,7 +197,7 @@ Content-Type: application/json
     "masterCategoryId": 2,
     "name": "Drinks",
     "slug": "drinks",
-    "icon": "🥤",
+    "icon": "https://api.example.com/media/cat-icons/drinks.png",
     "taxCategory": {
       "id": 2,
       "slug": "beverage_non_alcoholic",
