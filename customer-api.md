@@ -1136,7 +1136,7 @@ d5938525-f2a5-4849-803e-d579582af11f
   "message": "This table already has an active session",
   "status": "active",
   "requiresPin": true,
-  "pin": "0473",
+  "pin": null,
   "session": {
     "id": "12",
     "status": "active",
@@ -1147,7 +1147,7 @@ d5938525-f2a5-4849-803e-d579582af11f
 }
 ```
 
-> **Note:** `pin` in the 409 payload is the existing owner PIN — only the original scanning customer (or an admin/debug context) should rely on it. Joining customers should still be sent through `POST /api/customer/table/pin` with the PIN they were given verbally / on screen.
+> **Note:** The `pin` field is always `null` in 409 responses. The joining customer must receive the PIN through an out-of-band channel (verbally, or via a shared screen) and submit it to `POST /api/customer/table/pin`.
 
 **Flow note:**
 - If scan returns `201`, `requiresPin = false` because the scanning customer is already in the newly-created table session. The returned `pin` is for sharing with other customers.
@@ -1240,11 +1240,11 @@ When a table is already active, another customer can join that same table flow b
 
 ---
 
-### 3.13 Close Own Table Session 🔒
+### 3.13 Close Table Session 🔒
 
 **POST** `/api/customer/table/close`
 
-Closes the authenticated customer's own active table scan session for the given table by setting `status = closed` and `closed_at = now()`. Other customers at the same table keep their sessions open.
+Closes **all** active table scan sessions for the given table. Any authenticated customer can call this endpoint.
 
 **Authentication:** required (Bearer token).
 
@@ -1257,7 +1257,12 @@ Closes the authenticated customer's own active table scan session for the given 
 
 **Validation:**
 - `table_id`: required, integer — the `restaurant_tables.id` for the table to close.
-- `vendor_public_id`: optional, string — still accepted for backward compatibility. When supplied, the active session must also belong to that restaurant.
+- `vendor_public_id`: optional, string — still accepted for backward compatibility. When supplied, the active sessions must also belong to that restaurant.
+
+**Close rules:**
+- If any session user has an unpaid, non-draft, non-cancelled order → blocked.
+- If any session user has paid orders with unserved cart items → blocked.
+- Otherwise → all active sessions for this table are closed.
 
 **Response (200):**
 ```json
@@ -1276,14 +1281,13 @@ Closes the authenticated customer's own active table scan session for the given 
 ```
 
 **Notes:**
-- Only the requesting customer's own active session at the supplied `restaurant_table_id` is affected.
-- If the customer has an unpaid, non-draft, non-cancelled order in that session, the session remains active. Draft orders do not block closing the session.
-- If the customer's orders are paid, every cart item attached to those orders must be served before the session can close. Attached items include rows with `cart_items.order_id = order.id` and shared rows whose `shared_order_ids` contain that order id.
-- If the customer has no active session matching the supplied table, the endpoint returns `422 No active table session found.`
+- Closing affects all active sessions at the table, not just the caller's.
+- Draft orders do not block closing the session.
+- Paid orders with all items served do not block closing.
 
-**Response (422) — unpaid order exists:**
+**Response (422) — active order exists on the table:**
 ```json
-{ "message": "You have an active order for this table" }
+{ "message": "There is an active order on this table." }
 ```
 
 **Response (422) — paid order has unserved items:**
@@ -1303,7 +1307,44 @@ Closes the authenticated customer's own active table scan session for the given 
 
 ---
 
-### 3.14 Table Cart 🔒
+### 3.14 Call Waiter 🔒
+
+**POST** `/api/customer/table/call`
+
+Sends a notification to all active waiters at the restaurant. The customer must have an active table session.
+
+**Authentication:** required (Bearer token).
+
+**Body:** none.
+
+**Rules:**
+- Customer must have an active table session — otherwise blocked.
+- Only team members with role `waiter` and status `active` are notified.
+- If no active waiters exist at the restaurant → blocked.
+
+**Response (200):**
+```json
+{ "message": "Waiters have been notified." }
+```
+
+**Response (422) — no active session:**
+```json
+{ "message": "You do not have an active table session." }
+```
+
+**Response (422) — no waiters available:**
+```json
+{ "message": "No waiters available at this restaurant." }
+```
+
+**Response (401):**
+```json
+{ "message": "Unauthenticated." }
+```
+
+---
+
+### 3.15 Table Cart 🔒
 
 A **table cart** is the live cart of every customer currently sitting at the same `restaurant_table`. It is automatically scoped to the authenticated customer's currently-active `table_scan_session`.
 
@@ -1502,7 +1543,7 @@ Removes an item owned by the current session.
 
 ---
 
-### 3.14 Table Payment Summary 🔒
+### 3.16 Table Payment Summary 🔒
 
 **GET** `/api/customer/table/order/start`
 
@@ -1601,7 +1642,7 @@ Returns a payment-ready snapshot of the authenticated customer's current table:
 
 ---
 
-### 3.15 Create Order Draft 🔒
+### 3.17 Create Order Draft 🔒
 
 **POST** `/api/customer/table/order/draft`
 
@@ -1630,7 +1671,7 @@ No request body is required.
 
 ---
 
-### 3.16 Update Order 🔒
+### 3.18 Update Order 🔒
 
 **PUT** `/api/customer/table/order/update/{order_id}`
 
@@ -1693,7 +1734,7 @@ Share or unshare a `cart_item` for the caller's draft order. At least one of `sh
 
 ---
 
-### 3.17 Create Order Confirmed 🔒
+### 3.19 Create Order Confirmed 🔒
 
 **POST** `/api/customer/table/order/confirmed`
 
@@ -2280,9 +2321,14 @@ Receives Stripe PaymentIntent events and keeps `order_payments` and `orders` in 
 { "message": "Invalid Stripe webhook signature." }
 ```
 
+**Logging:** every webhook delivery attempt is logged to `stripe_webhook_logs` with event type, payment intent ID, HTTP status, outcome (`processed`, `signature_invalid`, `payment_not_found`, `ignored_event_type`), and any error message.
+
+**Recovery:** a scheduled command `payments:reconcile-stale` runs every 5 minutes, polling Stripe directly for any `order_payments` rows stuck in a non-succeeded state for >10 minutes where the order is still `payment_pending = true`.
+
 **Tables used:**
 - `orders` stores current customer-facing payment flags and Stripe transaction ID.
 - `order_payments` stores PaymentIntent audit/reconciliation data.
+- `stripe_webhook_logs` stores every webhook delivery attempt and its outcome.
 - `table_scan_sessions` links dine-in orders to the customer session.
 - `cart_items.order_id` links owned item rows to the order; `cart_items.shared_order_ids` links shared item rows to participant orders.
 - `vendor_settings` provides the vendor Stripe Connect account ID.
