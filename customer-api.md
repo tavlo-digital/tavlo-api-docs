@@ -15,6 +15,42 @@ Authorization: Bearer {token}
 
 All media fields (`logo_url`, `cover_photo_url`, `image_url`, `profile_picture`, review `images`, etc.) are returned as **absolute URLs** pointing at the backend, e.g. `http://localhost:8000/media/vendors/1/logo/abc.png`. Files are publicly accessible — no signed token or auth header is required to load them, so the frontend can use the URL directly in `<img>` tags.
 
+## Pricing — VAT-Inclusive (Gross)
+
+**All customer-facing prices are VAT-inclusive (gross).** The database stores net prices; the API computes gross prices at response time:
+
+```
+gross = net × (1 + vat_rate / 100)
+```
+
+This applies to: `price`, `discounted_price`, `unit_price`, `line_total`, `my_share`, paid addon `price`, and modifier option `price_adjustment`.
+
+VAT rates are resolved from the `tax_categories` table by the vendor's country and the item's `tax_category`. Default rates for Austria: `food` = 10%, `beverage_non_alcoholic` = 20%, `beverage_alcoholic` = 20%.
+
+### `tax_groups` Array
+
+Order-level responses include a `tax_groups` array that groups all items by tax category:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `code` | string | Letter code (A, B, C...) for receipt display |
+| `label` | string | Human-readable label, e.g. "Food (10%)" |
+| `tax_category` | string | Tax category slug |
+| `vat_rate` | float | VAT percentage |
+| `vat_amount` | float | Total VAT for this group |
+| `gross_amount` | float | Total gross (VAT-inclusive) for this group |
+| `net_amount` | float | Total net (VAT-exclusive) for this group |
+
+### `totals` Object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `net_total` | float | Sum of all `net_amount` across tax groups |
+| `vat_total` | float | Sum of all `vat_amount` across tax groups |
+| `service_fee` | float | `gross_total × service_fee_rate%` (from vendor settings) |
+| `grand_total` | float | `gross_total + service_fee` |
+| `currency` | string | Only present in order detail responses |
+
 ---
 
 ## 0. Health & Diagnostics (Public)
@@ -693,13 +729,12 @@ Returns all active menu categories across discoverable restaurants (deduplicated
     "name": "4 Piece chicken Box",
     "description": "4 Piece of hand-breaded original chicken...",
     "image_url": "http://localhost:8000/media/menu-items/42/photo/abc123.jpg",
-    "price": 18.99,
+    "price": 20.89,
     "has_discount": false,
     "discount_percent": null,
     "discounted_price": null,
-    "vat_rate": 20,
+    "vat_rate": 10,
     "tax_category": "food",
-    "vat_amount": 3.80,
     "rating": 4.4,
     "review_count": 252,
     "ordered_count": 1200,
@@ -710,7 +745,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
     "protein": 38.00,
     "dietary_preference": null,
     "paid_addons": [
-      { "name": "Extra cheese", "price": 1.50 }
+      { "name": "Extra cheese", "price": 1.65, "vat_rate": 10 }
     ],
     "free_addons": ["Ketchup"],
     "removable_items": ["Onions"],
@@ -730,9 +765,10 @@ Returns all active menu categories across discoverable restaurants (deduplicated
         "is_required": true,
         "min_selection": 1,
         "max_selection": 1,
+        "vat_rate": 10,
         "options": [
           { "id": 1, "name": "Fries", "price_adjustment": 0.00 },
-          { "id": 2, "name": "Onion Rings", "price_adjustment": 1.50 }
+          { "id": 2, "name": "Onion Rings", "price_adjustment": 1.65 }
         ]
       }
     ]
@@ -742,14 +778,17 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 
 
 **Notes:**
+- **All prices are VAT-inclusive (gross).** The database stores net prices; the API computes gross = net × (1 + vat_rate/100) at response time using the `tax_categories` table for the vendor's country.
 - Both `category_id` and `search` are optional. If omitted, all active and currently available menu items are returned.
 - The restaurant must be live/discoverable (`vendor_settings.is_live_and_discoverable = true`); hidden restaurants return 404 for menu, menu item detail, categories, tables, reviews, and about endpoints.
 - `popularity_rank` is computed from `ordered_count` (e.g. `4` = "#4 most liked").
 - `rating` is a percentage-style approval score (e.g. `88%` with `252` reviews).
 - `discount_percent` and `discounted_price` are only present when `has_discount` is `true`.
-- `vat_amount` is calculated per unit from the effective price (`discounted_price` when discounted, otherwise `price`) multiplied by `vat_rate`.
+- `vat_rate` is resolved from the `tax_categories` table for the vendor's country and the item's `tax_category` (e.g. food=10%, beverage=20% in Austria).
 - Each item includes its `category` for grouping/display.
-- `paid_addons`, `free_addons`, and `removable_items` are legacy menu-item customization options configured directly on the item.
+- `paid_addons` include `vat_rate` per add-on. Prices are gross.
+- `modifier_groups` include `vat_rate` at the group level. Option `price_adjustment` values are gross.
+- `free_addons` and `removable_items` are legacy menu-item customization options configured directly on the item.
 - `modifier_groups` are reusable vendor-defined option groups attached to the item. Only active groups and options are returned.
 
 ---
@@ -765,13 +804,12 @@ Returns all active menu categories across discoverable restaurants (deduplicated
   "name": "4 Piece chicken Box",
   "description": "4 Piece of hand-breaded original chicken with our special sauce and coleslaw.",
   "image_url": "http://localhost:8000/media/menu-items/42/photo/abc123.jpg",
-  "price": 18.99,
+  "price": 20.89,
   "has_discount": true,
   "discount_percent": 15.00,
-  "discounted_price": 16.14,
-  "vat_rate": 20,
+  "discounted_price": 17.75,
+  "vat_rate": 10,
   "tax_category": "food",
-  "vat_amount": 3.23,
   "available": true,
   "rating": 4.4,
   "review_count": 252,
@@ -782,7 +820,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
   "protein": 38.00,
   "dietary_preference": null,
   "paid_addons": [
-    { "name": "Extra cheese", "price": 1.50 }
+    { "name": "Extra cheese", "price": 1.65, "vat_rate": 10 }
   ],
   "free_addons": ["Ketchup"],
   "removable_items": ["Onions"],
@@ -808,10 +846,11 @@ Returns all active menu categories across discoverable restaurants (deduplicated
       "is_required": true,
       "min_selection": 1,
       "max_selection": 1,
+      "vat_rate": 10,
       "options": [
         { "id": 1, "name": "Fries", "price_adjustment": 0.00 },
-        { "id": 2, "name": "Onion Rings", "price_adjustment": 1.50 },
-        { "id": 3, "name": "Sweet Potato Fries", "price_adjustment": 2.00 }
+        { "id": 2, "name": "Onion Rings", "price_adjustment": 1.65 },
+        { "id": 3, "name": "Sweet Potato Fries", "price_adjustment": 2.20 }
       ]
     }
   ]
@@ -819,12 +858,13 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 ```
 
 **Notes:**
+- **All prices are VAT-inclusive (gross).** See §3.5 notes for details.
 - Only active and currently available items are returned by this endpoint; unavailable items return 404.
 - `ingredients` is a list of ingredient names (from the JSON column).
 - `fat`, `carbs`, `protein` are in grams; `null` if not set.
 - `dietary_preference` can be `vegetarian`, `vegan`, `gluten_free`, etc. or `null`.
 - `allergens` and `tags` include `icon` for UI display.
-- `modifier_groups` shows customisation options — `type` is `single` or `multiple`, with `min_selection`/`max_selection` constraints.
+- `modifier_groups` shows customisation options — `type` is `single` or `multiple`, with `min_selection`/`max_selection` constraints. Group-level `vat_rate` applies to all options.
 - `discount_percent` and `discounted_price` are only present when `has_discount` is `true`.
 - Only active modifier groups and options are returned.
 
@@ -1388,9 +1428,9 @@ Returns all visible open cart items per person at the same table. Draft orders d
           "id": 1,
           "quantity": 2,
           "notes": "No salt",
-          "price": 5.00,
+          "price": 5.50,
           "paid_addons": [
-            { "name": "Cheese sauce", "price": 1.50 }
+            { "name": "Cheese sauce", "price": 1.65, "vat_rate": 10 }
           ],
           "free_addons": ["Ketchup"],
           "removed_items": ["Salt"],
@@ -1402,35 +1442,63 @@ Returns all visible open cart items per person at the same table. Draft orders d
               "is_required": true,
               "min_selection": 1,
               "max_selection": 1,
+              "vat_rate": 10,
               "options": [
-                { "id": 2, "name": "Onion Rings", "price_adjustment": 1.50 }
+                { "id": 2, "name": "Onion Rings", "price_adjustment": 1.65 }
               ]
             }
           ],
-          "vat_amount": 2.00,
-          "line_total": 10.00,
+          "vat_rate": 10,
+          "vat_amount": 1.00,
+          "line_total": 11.00,
           "menu_item": {
             "id": 42,
             "name": "Fries",
-            "price": 3.50,
-            "vat_rate": 20,
-            "vat_amount": 1.40,
+            "price": 3.85,
+            "vat_rate": 10,
             "tax_category": "food",
             "image_url": null
           }
         }
-      ]
+      ],
+      "tax_groups": [
+        {
+          "code": "A",
+          "label": "Food (10%)",
+          "tax_category": "food",
+          "vat_rate": 10,
+          "vat_amount": 1.00,
+          "gross_amount": 11.00,
+          "net_amount": 10.00
+        }
+      ],
+      "totals": {
+        "net_total": 10.00,
+        "vat_total": 1.00,
+        "service_fee": 0.00,
+        "grand_total": 11.00
+      }
     },
     {
       "session_id": 13,
       "customer_id": 8,
       "is_me": false,
       "name": "Bob Jones",
-      "personal_items": []
+      "personal_items": [],
+      "tax_groups": [],
+      "totals": {
+        "net_total": 0.00,
+        "vat_total": 0.00,
+        "service_fee": 0.00,
+        "grand_total": 0.00
+      }
     }
   ]
 }
 ```
+
+**Notes:**
+- `tax_groups` and `totals` are computed **per person** from that person's open cart items.
 
 #### 3.14.2 Add Item
 
@@ -1480,9 +1548,9 @@ Adds an item to the authenticated customer's cart. If the same `menu_item_id` al
   "id": 1,
   "quantity": 2,
   "notes": "No salt",
-  "price": 5.00,
+  "price": 5.50,
   "paid_addons": [
-    { "name": "Cheese sauce", "price": 1.50 }
+    { "name": "Cheese sauce", "price": 1.65, "vat_rate": 10 }
   ],
   "free_addons": ["Ketchup"],
   "removed_items": ["Salt"],
@@ -1494,19 +1562,20 @@ Adds an item to the authenticated customer's cart. If the same `menu_item_id` al
       "is_required": true,
       "min_selection": 1,
       "max_selection": 1,
+      "vat_rate": 10,
       "options": [
-        { "id": 2, "name": "Onion Rings", "price_adjustment": 1.50 }
+        { "id": 2, "name": "Onion Rings", "price_adjustment": 1.65 }
       ]
     }
   ],
-  "vat_amount": 2.00,
-  "line_total": 10.00,
+  "vat_rate": 10,
+  "vat_amount": 1.00,
+  "line_total": 11.00,
   "menu_item": {
     "id": 42,
     "name": "Fries",
-    "price": 3.50,
-    "vat_rate": 20,
-    "vat_amount": 1.40,
+    "price": 3.85,
+    "vat_rate": 10,
     "tax_category": "food",
     "image_url": null
   }
@@ -1570,7 +1639,7 @@ Returns a payment-ready snapshot of the authenticated customer's current table:
       "is_me": true,
       "name": "Alice Smith",
       "item_count": 3,
-      "total_price": 12.50,
+      "total_price": 14.30,
       "items": [
         {
           "cart_item_id": 1,
@@ -1578,8 +1647,8 @@ Returns a payment-ready snapshot of the authenticated customer's current table:
           "name": "Fries",
           "image_url": null,
           "quantity": 2,
-          "unit_price": 3.50,
-          "total_price": 7.00,
+          "unit_price": 3.85,
+          "total_price": 7.70,
           "is_mine": true
         },
         {
@@ -1588,11 +1657,28 @@ Returns a payment-ready snapshot of the authenticated customer's current table:
           "name": "Coke",
           "image_url": null,
           "quantity": 1,
-          "unit_price": 5.50,
-          "total_price": 5.50,
+          "unit_price": 6.60,
+          "total_price": 6.60,
           "is_mine": true
         }
-      ]
+      ],
+      "tax_groups": [
+        {
+          "code": "A",
+          "label": "Food (10%)",
+          "tax_category": "food",
+          "vat_rate": 10,
+          "vat_amount": 1.30,
+          "gross_amount": 14.30,
+          "net_amount": 13.00
+        }
+      ],
+      "totals": {
+        "net_total": 13.00,
+        "vat_total": 1.30,
+        "service_fee": 0.00,
+        "grand_total": 14.30
+      }
     },
     {
       "session_id": 13,
@@ -1600,7 +1686,7 @@ Returns a payment-ready snapshot of the authenticated customer's current table:
       "is_me": false,
       "name": "Bob Jones",
       "item_count": 1,
-      "total_price": 18.99,
+      "total_price": 20.89,
       "items": [
         {
           "cart_item_id": 3,
@@ -1608,16 +1694,33 @@ Returns a payment-ready snapshot of the authenticated customer's current table:
           "name": "4 Piece chicken Box",
           "image_url": "http://localhost:8000/media/menu-items/42/photo/abc123.jpg",
           "quantity": 1,
-          "unit_price": 18.99,
-          "total_price": 18.99,
+          "unit_price": 20.89,
+          "total_price": 20.89,
           "is_mine": false
         }
-      ]
+      ],
+      "tax_groups": [
+        {
+          "code": "A",
+          "label": "Food (10%)",
+          "tax_category": "food",
+          "vat_rate": 10,
+          "vat_amount": 1.90,
+          "gross_amount": 20.89,
+          "net_amount": 18.99
+        }
+      ],
+      "totals": {
+        "net_total": 18.99,
+        "vat_total": 1.90,
+        "service_fee": 0.00,
+        "grand_total": 20.89
+      }
     }
   ],
   "summary": {
     "item_count": 4,
-    "total_price": 31.49
+    "total_price": 35.19
   }
 }
 ```
@@ -1626,7 +1729,7 @@ Returns a payment-ready snapshot of the authenticated customer's current table:
 - The current table is derived from the customer's active `table_scan_sessions` row — no `table_id` needs to be passed in the URL or body.
 - The authenticated customer's own line is included in `people[]` and identified by `is_me: true`.
 - `is_mine` on an item is `true` when the item belongs to the authenticated customer's session.
-- `unit_price` and `total_price` are floats in the restaurant's currency. `total_price` per item = `unit_price × quantity`.
+- `unit_price` and `total_price` are VAT-inclusive (gross) floats in the restaurant's currency. `total_price` per item = `unit_price × quantity`.
 - `summary.total_price` equals the sum of `people[].total_price`.
 - `name` falls back to `"Guest"` if the joined customer has no name set.
 
@@ -1849,9 +1952,9 @@ This is the **canonical "table view" response** — it is also returned (with th
               "name": "Fries",
               "image_url": null,
               "quantity": 2,
-              "unit_price": 5.00,
+              "unit_price": 5.50,
               "paid_addons": [
-                { "name": "Cheese sauce", "price": 1.50 }
+                { "name": "Cheese sauce", "price": 1.65, "vat_rate": 10 }
               ],
               "free_addons": ["Ketchup"],
               "removed_items": ["Salt"],
@@ -1863,19 +1966,20 @@ This is the **canonical "table view" response** — it is also returned (with th
                   "is_required": true,
                   "min_selection": 1,
                   "max_selection": 1,
+                  "vat_rate": 10,
                   "options": [
-                    { "id": 2, "name": "Onion Rings", "price_adjustment": 1.50 }
+                    { "id": 2, "name": "Onion Rings", "price_adjustment": 1.65 }
                   ]
                 }
               ],
-              "vat_rate": 20,
+              "vat_rate": 10,
               "tax_category": "food",
-              "vat_amount": 2.00,
-              "line_total": 10.00,
+              "vat_amount": 1.00,
+              "line_total": 11.00,
               "is_mine": true,
               "shared_between": 1,
               "shared_with": [],
-              "my_share": 10.00,
+              "my_share": 11.00,
               "status": "Preparing",
               "preparing_start_at": "2026-04-27T10:31:00+00:00",
               "ready_at": null,
@@ -1887,14 +1991,14 @@ This is the **canonical "table view" response** — it is also returned (with th
               "name": "Pizza",
               "image_url": null,
               "quantity": 1,
-              "unit_price": 18.99,
-              "line_total": 18.99,
+              "unit_price": 20.89,
+              "line_total": 20.89,
               "is_mine": false,
               "shared_between": 2,
               "shared_with": [
                 { "order_id": 101, "customer_id": 9, "customer_name": "Bob Jones" }
               ],
-              "my_share": 9.50,
+              "my_share": 10.45,
               "status": "Ready",
               "preparing_start_at": "2026-04-27T10:32:00+00:00",
               "ready_at": "2026-04-27T10:42:00+00:00",
@@ -1902,7 +2006,24 @@ This is the **canonical "table view" response** — it is also returned (with th
             }
           ]
         }
-      ]
+      ],
+      "tax_groups": [
+        {
+          "code": "A",
+          "label": "Food (10%)",
+          "tax_category": "food",
+          "vat_rate": 10,
+          "vat_amount": 2.90,
+          "gross_amount": 31.89,
+          "net_amount": 28.99
+        }
+      ],
+      "totals": {
+        "net_total": 28.99,
+        "vat_total": 2.90,
+        "service_fee": 0.00,
+        "grand_total": 31.89
+      }
     }
   ],
   "summary": {
@@ -1920,9 +2041,11 @@ This is the **canonical "table view" response** — it is also returned (with th
 | `menu_item_id` | int | The menu item this cart entry references. |
 | `name`, `image_url` | string\|null | Cached from `menu_items`. |
 | `quantity` | int | Cart quantity. |
-| `unit_price` | float | Per-unit price, including selected paid add-ons and selected modifier price adjustments. |
-| `paid_addons`, `free_addons`, `removed_items`, `selected_modifiers` | array | Selected customization options for this cart item. |
-| `vat_rate`, `tax_category`, `vat_amount` | float/string | Tax fields from the menu item. `vat_amount` is `line_total × vat_rate / 100`. |
+| `unit_price` | float | Per-unit VAT-inclusive (gross) price, including selected paid add-ons and selected modifier price adjustments. |
+| `paid_addons`, `free_addons`, `removed_items`, `selected_modifiers` | array | Selected customization options for this cart item. Paid add-ons and modifier options include `vat_rate` and gross prices. |
+| `vat_rate` | float | VAT rate resolved from `tax_categories` table for the vendor's country and item's `tax_category`. |
+| `tax_category` | string | Tax category slug (e.g. `food`, `beverage_non_alcoholic`, `beverage_alcoholic`). |
+| `vat_amount` | float | VAT portion of `line_total`, computed as `line_total - (line_total / (1 + vat_rate/100))`. |
 | `line_total` | float | `unit_price × quantity`. |
 | `is_mine` | bool | `true` if the cart_item belongs to the caller's own session. |
 | `shared_between` | int | `1 + count(shared_order_ids)`. The number of orders splitting this item (owner + sharers). |
@@ -1991,9 +2114,6 @@ Returns the authenticated customer's account-level order history grouped by rest
           "payment_status": "paid",
           "payment_method": "card",
           "items_count": 2,
-          "subtotal": 20.24,
-          "vat": 4.0,
-          "service_fee": 0.0,
           "total_amount": 24.24,
           "items": [
             {
@@ -2001,22 +2121,60 @@ Returns the authenticated customer's account-level order history grouped by rest
               "menu_item_id": 42,
               "name": "Tonkotsu Ramen",
               "quantity": 1,
-              "unit_price": 16.24,
-              "line_total": 16.24,
+              "unit_price": 17.86,
+              "line_total": 17.86,
+              "vat_rate": 10,
+              "tax_category": "food",
               "image_url": "https://example.com/media/menu-items/42/photo.png",
-              "notes": null
+              "notes": null,
+              "paid_addons": [],
+              "free_addons": [],
+              "removed_items": [],
+              "selected_modifiers": []
             },
             {
               "id": 57,
               "menu_item_id": 57,
               "name": "Matcha Latte",
               "quantity": 1,
-              "unit_price": 8.0,
-              "line_total": 8.0,
+              "unit_price": 9.60,
+              "line_total": 9.60,
+              "vat_rate": 20,
+              "tax_category": "beverage_non_alcoholic",
               "image_url": null,
-              "notes": null
+              "notes": null,
+              "paid_addons": [],
+              "free_addons": [],
+              "removed_items": [],
+              "selected_modifiers": []
             }
-          ]
+          ],
+          "tax_groups": [
+            {
+              "code": "A",
+              "label": "Food (10%)",
+              "tax_category": "food",
+              "vat_rate": 10,
+              "vat_amount": 1.62,
+              "gross_amount": 17.86,
+              "net_amount": 16.24
+            },
+            {
+              "code": "B",
+              "label": "Beverage (20%)",
+              "tax_category": "beverage_non_alcoholic",
+              "vat_rate": 20,
+              "vat_amount": 1.60,
+              "gross_amount": 9.60,
+              "net_amount": 8.00
+            }
+          ],
+          "totals": {
+            "net_total": 24.24,
+            "vat_total": 3.22,
+            "service_fee": 0.00,
+            "grand_total": 27.46
+          }
         }
       ],
       "pagination": {
@@ -2073,29 +2231,205 @@ Returns one order detail for the authenticated customer.
       "menu_item_id": 42,
       "name": "Tonkotsu Ramen",
       "quantity": 1,
-      "unit_price": 16.24,
-      "line_total": 16.24,
+      "unit_price": 17.86,
+      "line_total": 17.86,
+      "vat_rate": 10,
+      "tax_category": "food",
       "image_url": null,
-      "notes": null
+      "notes": null,
+      "paid_addons": [],
+      "free_addons": [],
+      "removed_items": [],
+      "selected_modifiers": []
     },
     {
       "menu_item_id": 57,
       "name": "Matcha Latte",
       "quantity": 1,
-      "unit_price": 8.0,
-      "line_total": 8.0,
+      "unit_price": 9.60,
+      "line_total": 9.60,
+      "vat_rate": 20,
+      "tax_category": "beverage_non_alcoholic",
       "image_url": null,
-      "notes": null
+      "notes": null,
+      "paid_addons": [],
+      "free_addons": [],
+      "removed_items": [],
+      "selected_modifiers": []
+    }
+  ],
+  "tax_groups": [
+    {
+      "code": "A",
+      "label": "Food (10%)",
+      "tax_category": "food",
+      "vat_rate": 10,
+      "vat_amount": 1.62,
+      "gross_amount": 17.86,
+      "net_amount": 16.24
+    },
+    {
+      "code": "B",
+      "label": "Beverage (20%)",
+      "tax_category": "beverage_non_alcoholic",
+      "vat_rate": 20,
+      "vat_amount": 1.60,
+      "gross_amount": 9.60,
+      "net_amount": 8.00
     }
   ],
   "totals": {
-    "subtotal": 20.24,
-    "vat": 4.0,
-    "service_fee": 0.0,
-    "total": 24.24,
+    "net_total": 24.24,
+    "vat_total": 3.22,
+    "service_fee": 0.00,
+    "grand_total": 27.46,
     "currency": "USD"
   }
 }
+```
+
+**Response (404):**
+```json
+{ "message": "No query results for model [App\\Models\\Order]." }
+```
+
+**Response (401):**
+```json
+{ "message": "Unauthenticated." }
+```
+
+---
+
+### 4.3.1 Order Receipt
+
+**GET** `/api/customer/orders/{orderPublicId}/receipt`
+
+Returns a structured receipt payload for a paid order, including restaurant legal details, itemised order with VAT breakdown, tax groups, totals, payment confirmation, and legal notes. On first access, an invoice number is atomically generated and persisted on the order.
+
+**Authentication:** required (Bearer token).
+
+**Rules:**
+- The order must belong to the authenticated customer.
+- The order must have `payment_received = true` — unpaid orders return 422.
+
+**Response (200):**
+```json
+{
+  "data": {
+    "restaurant": {
+      "name": "La Bella Cucina",
+      "logo_url": "http://localhost:8000/media/vendors/1/logo/abc.png",
+      "address": "Mariahilfer Straße 45, Vienna, AT",
+      "vat_id": "ATU12345678",
+      "phone": "+43 1 234 5678",
+      "email": "info@labellacucina.at",
+      "company_register_number": "FN 123456 a"
+    },
+    "receipt": {
+      "invoice_number": "INV-0001001",
+      "date": "2026-06-05",
+      "time": "19:43",
+      "table": "Table 4",
+      "order_id": "ORD-UHO2XBI1",
+      "currency": "EUR",
+      "locale": "en-AT"
+    },
+    "order": {
+      "items": [
+        {
+          "id": 1,
+          "name": "Bruschetta al Pomodoro",
+          "quantity": 2,
+          "unit_price_gross": 8.90,
+          "line_gross": 17.80,
+          "tax_category": "FOOD",
+          "vat_rate": 10
+        },
+        {
+          "id": 2,
+          "name": "Aperol Spritz",
+          "quantity": 1,
+          "unit_price_gross": 9.90,
+          "line_gross": 9.90,
+          "tax_category": "BEVERAGE_ALCOHOLIC",
+          "vat_rate": 20
+        }
+      ]
+    },
+    "tax_groups": [
+      {
+        "code": "A",
+        "label": "Food (10%)",
+        "tax_category": "FOOD",
+        "vat_rate": 10,
+        "gross_amount": 17.80,
+        "net_amount": 16.18,
+        "vat_amount": 1.62
+      },
+      {
+        "code": "B",
+        "label": "Beverage Alcoholic (20%)",
+        "tax_category": "BEVERAGE_ALCOHOLIC",
+        "vat_rate": 20,
+        "gross_amount": 9.90,
+        "net_amount": 8.25,
+        "vat_amount": 1.65
+      }
+    ],
+    "totals": {
+      "net_total": 24.43,
+      "vat_total": 3.27,
+      "service_fee": 2.77,
+      "grand_total": 30.47
+    },
+    "payment": {
+      "method": "stripe",
+      "status": "CONFIRMED",
+      "transaction_id": "pi_123456789",
+      "paid_at": "2026-06-05T19:43:00+02:00"
+    },
+    "legal": {
+      "invoice_note": "This invoice was issued in accordance with § 11 UStG (Austria).",
+      "tax_note": "All prices include statutory VAT. The service date corresponds to the invoice date.",
+      "company_register_note": "Registration number: FN 123456 a",
+      "rksv_required_check": true
+    }
+  },
+  "meta": {
+    "generated_at": "2026-06-05T19:43:10+02:00",
+    "template": "tavlo-receipt-template",
+    "version": "1.0"
+  }
+}
+```
+
+**Field reference:**
+
+| Section | Field | Source |
+|---------|-------|--------|
+| `restaurant.name` | `vendors.restaurant_name` | |
+| `restaurant.logo_url` | `vendor_settings.logo_url` | Absolute URL |
+| `restaurant.address` | `vendors.address, city, country` | Joined with comma |
+| `restaurant.vat_id` | `vendors.vat_number` | |
+| `restaurant.company_register_number` | `vendors.business_registration_number` | |
+| `receipt.invoice_number` | Auto-generated from `vendor_settings.invoice_prefix` + `next_invoice_number` | Persisted on `orders.invoice_number` after first access |
+| `receipt.locale` | Derived from `vendor_settings.default_language` + vendor country code | e.g. `en-AT`, `de-DE` |
+| `receipt.table` | From `table_scan_session` → `restaurant_tables.name` or `Table {number}` | `null` if no table session |
+| `order.items[].tax_category` | Uppercased `menu_items.tax_category` | e.g. `FOOD`, `BEVERAGE_ALCOHOLIC` |
+| `payment.status` | `CONFIRMED` when `payment_received = true` | |
+| `payment.transaction_id` | `orders.transaction_id` or `order_payments.stripe_payment_intent_id` | |
+| `payment.paid_at` | `orders.payment_confirmed_at` or `order_payments.paid_at` | |
+| `legal.invoice_note` | Hardcoded per vendor country | AT: § 11 UStG, DE: § 14 UStG, GB: UK VAT |
+| `legal.rksv_required_check` | `true` for Austrian vendors | Hardcoded |
+
+**Invoice number generation:**
+- Format: `{invoice_prefix}-{zero-padded 7-digit number}` (e.g. `INV-0001001`).
+- Generated atomically on first receipt access — `vendor_settings.next_invoice_number` is incremented with a row lock.
+- Subsequent requests for the same order return the persisted `orders.invoice_number` without incrementing.
+
+**Response (422) — order not paid:**
+```json
+{ "message": "Receipt is only available for paid orders." }
 ```
 
 **Response (404):**
@@ -2366,10 +2700,16 @@ Returns the authenticated participant's order tracking payload. This endpoint is
       "name": "Fries",
       "image_url": null,
       "quantity": 2,
-      "unit_price": 3.5,
-      "line_total": 7,
+      "unit_price": 3.85,
+      "line_total": 7.70,
+      "vat_rate": 10,
+      "tax_category": "food",
       "status": "Preparing",
-      "notes": null
+      "notes": null,
+      "paid_addons": [],
+      "free_addons": [],
+      "removed_items": [],
+      "selected_modifiers": []
     },
     {
       "cart_item_id": 3,
@@ -2377,10 +2717,16 @@ Returns the authenticated participant's order tracking payload. This endpoint is
       "name": "Pizza",
       "image_url": null,
       "quantity": 1,
-      "unit_price": 18.99,
-      "line_total": 18.99,
+      "unit_price": 20.89,
+      "line_total": 20.89,
+      "vat_rate": 10,
+      "tax_category": "food",
       "status": "Preparing",
-      "notes": null
+      "notes": null,
+      "paid_addons": [],
+      "free_addons": [],
+      "removed_items": [],
+      "selected_modifiers": []
     }
   ],
   "shared_items": [
@@ -2390,10 +2736,16 @@ Returns the authenticated participant's order tracking payload. This endpoint is
       "name": "Fries",
       "image_url": null,
       "quantity": 2,
-      "unit_price": 3.5,
-      "line_total": 7,
+      "unit_price": 3.85,
+      "line_total": 7.70,
+      "vat_rate": 10,
+      "tax_category": "food",
       "status": "Preparing",
       "notes": null,
+      "paid_addons": [],
+      "free_addons": [],
+      "removed_items": [],
+      "selected_modifiers": [],
       "shared_between": 2,
       "shared_with": [
         {
@@ -2402,7 +2754,7 @@ Returns the authenticated participant's order tracking payload. This endpoint is
           "customer_name": "Bob Jones"
         }
       ],
-      "my_share": 3.5
+      "my_share": 3.85
     },
     {
       "cart_item_id": 3,
@@ -2410,10 +2762,16 @@ Returns the authenticated participant's order tracking payload. This endpoint is
       "name": "Pizza",
       "image_url": null,
       "quantity": 1,
-      "unit_price": 18.99,
-      "line_total": 18.99,
+      "unit_price": 20.89,
+      "line_total": 20.89,
+      "vat_rate": 10,
+      "tax_category": "food",
       "status": "Preparing",
       "notes": null,
+      "paid_addons": [],
+      "free_addons": [],
+      "removed_items": [],
+      "selected_modifiers": [],
       "shared_between": 2,
       "shared_with": [
         {
@@ -2422,9 +2780,26 @@ Returns the authenticated participant's order tracking payload. This endpoint is
           "customer_name": "Bob Jones"
         }
       ],
-      "my_share": 9.5
+      "my_share": 10.45
     }
-  ]
+  ],
+  "tax_groups": [
+    {
+      "code": "A",
+      "label": "Food (10%)",
+      "tax_category": "food",
+      "vat_rate": 10,
+      "vat_amount": 2.60,
+      "gross_amount": 28.59,
+      "net_amount": 25.99
+    }
+  ],
+  "totals": {
+    "net_total": 25.99,
+    "vat_total": 2.60,
+    "service_fee": 0.00,
+    "grand_total": 28.59
+  }
 }
 ```
 
