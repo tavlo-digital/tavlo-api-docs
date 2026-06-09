@@ -48,7 +48,8 @@ Order-level responses include a `tax_groups` array that groups all items by tax 
 | `net_total` | float | Sum of all `net_amount` across tax groups |
 | `vat_total` | float | Sum of all `vat_amount` across tax groups |
 | `service_fee` | float | `gross_total × service_fee_rate%` (from vendor settings) |
-| `grand_total` | float | `gross_total + service_fee` |
+| `total_tips` | float | Sum of `tip_amount` from the order(s). In table history: sum across all orders for one person. In order detail/history/receipt: the single order's tip |
+| `grand_total` | float | `gross_total + service_fee + total_tips` |
 | `currency` | string | Only present in order detail responses |
 
 ---
@@ -1925,6 +1926,7 @@ This is the **canonical "table view" response** — it is also returned (with th
           "table_scan_session_id": 12,
           "status": "confirmed",
           "amount": 16.49,
+          "tip_amount": 0.00,
           "currency": "EUR",
           "order_number": null,
           "order_type": "dine-in",
@@ -2022,6 +2024,7 @@ This is the **canonical "table view" response** — it is also returned (with th
         "net_total": 28.99,
         "vat_total": 2.90,
         "service_fee": 0.00,
+        "total_tips": 0.00,
         "grand_total": 31.89
       }
     }
@@ -2115,6 +2118,7 @@ Returns the authenticated customer's account-level order history grouped by rest
           "payment_method": "card",
           "items_count": 2,
           "total_amount": 24.24,
+          "tip_amount": 0.00,
           "items": [
             {
               "id": 42,
@@ -2173,6 +2177,7 @@ Returns the authenticated customer's account-level order history grouped by rest
             "net_total": 24.24,
             "vat_total": 3.22,
             "service_fee": 0.00,
+            "total_tips": 0.00,
             "grand_total": 27.46
           }
         }
@@ -2226,6 +2231,7 @@ Returns one order detail for the authenticated customer.
   "order_type": "dine-in",
   "payment_status": "paid",
   "payment_method": "card",
+  "tip_amount": 0.00,
   "items": [
     {
       "menu_item_id": 42,
@@ -2282,6 +2288,7 @@ Returns one order detail for the authenticated customer.
     "net_total": 24.24,
     "vat_total": 3.22,
     "service_fee": 0.00,
+    "total_tips": 0.00,
     "grand_total": 27.46,
     "currency": "USD"
   }
@@ -2380,6 +2387,7 @@ Returns a structured receipt payload for a paid order, including restaurant lega
       "net_total": 24.43,
       "vat_total": 3.27,
       "service_fee": 2.77,
+      "total_tips": 0.00,
       "grand_total": 30.47
     },
     "payment": {
