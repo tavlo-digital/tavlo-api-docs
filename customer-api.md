@@ -1983,6 +1983,7 @@ This is the **canonical "table view" response** — it is also returned (with th
               "shared_with": [],
               "my_share": 11.00,
               "status": "Preparing",
+              "received_at": "2026-04-27T10:30:00+00:00",
               "preparing_start_at": "2026-04-27T10:31:00+00:00",
               "ready_at": null,
               "served_at": null
@@ -2002,6 +2003,7 @@ This is the **canonical "table view" response** — it is also returned (with th
               ],
               "my_share": 10.45,
               "status": "Ready",
+              "received_at": "2026-04-27T10:30:00+00:00",
               "preparing_start_at": "2026-04-27T10:32:00+00:00",
               "ready_at": "2026-04-27T10:42:00+00:00",
               "served_at": null
@@ -2054,7 +2056,8 @@ This is the **canonical "table view" response** — it is also returned (with th
 | `shared_between` | int | `1 + count(shared_order_ids)`. The number of orders splitting this item (owner + sharers). |
 | `shared_with` | object[] | The orders that share this item with the owner. Each entry: `order_id`, `customer_id`, `customer_name`. Empty array if unshared. |
 | `my_share` | float | `line_total / shared_between` — what each participating order contributes. |
-| `status` | string\|null | Per-item status derived from timestamps: `Served` when `served_at` is set, `Ready` when `ready_at` is set, `Preparing` when `preparing_start_at` is set, otherwise `null`. |
+| `status` | string\|null | Per-item status derived from timestamps: `Served` when `served_at` is set, `Ready` when `ready_at` is set, `Preparing` when `preparing_start_at` is set, `Received` when `received_at` is set, otherwise `null`. |
+| `received_at` | ISO8601\|null | Set when the order is confirmed and the cart item is bound to the order. |
 | `preparing_start_at`, `ready_at`, `served_at` | ISO8601\|null | Per-item preparation/service timestamps (set by the vendor flow). |
 
 **Item-set rule for an order:**
