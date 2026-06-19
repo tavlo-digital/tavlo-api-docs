@@ -1572,19 +1572,26 @@ Closes **all** active table scan sessions for the given table. Any authenticated
 
 ---
 
-### 3.14 Call Waiter 🔒
+### 3.14 Call Waiter
 
 **POST** `/api/customer/table/call`
 
-Sends a notification to all active waiters at the restaurant. The customer must have an active table session.
+Sends a notification to all active waiters at the restaurant that owns the supplied table.
 
-**Authentication:** required (Bearer token).
+**Authentication:** not required.
 
-**Body:** none.
+**Request body:**
+
+```json
+{
+  "table_id": 42
+}
+```
 
 **Rules:**
 
-- Customer must have an active table session — otherwise blocked.
+- `table_id` must be the ID of an existing restaurant table.
+- The table determines which restaurant's waiters are notified; no table scan session is required.
 - Only team members with role `waiter` and status `active` are notified.
 - If no active waiters exist at the restaurant → blocked.
 
@@ -1594,22 +1601,21 @@ Sends a notification to all active waiters at the restaurant. The customer must 
 { "message": "Waiters have been notified." }
 ```
 
-**Response (422) — no active session:**
+**Response (422) — missing or invalid table ID:**
 
 ```json
-{ "message": "You do not have an active table session." }
+{
+  "message": "The table id field is required.",
+  "errors": {
+    "table_id": ["The table id field is required."]
+  }
+}
 ```
 
 **Response (422) — no waiters available:**
 
 ```json
 { "message": "No waiters available at this restaurant." }
-```
-
-**Response (401):**
-
-```json
-{ "message": "Unauthenticated." }
 ```
 
 ---
