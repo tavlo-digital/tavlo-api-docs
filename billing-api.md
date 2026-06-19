@@ -10,19 +10,121 @@ All endpoints require authentication via a Sanctum Bearer token issued by the `a
 
 ## Table of Contents
 
-1. [Get Billing Details](#1-get-billing-details)
-2. [List Invoices](#2-list-invoices)
-3. [Download Invoice](#3-download-invoice)
-4. [Get Usage Stats](#4-get-usage-stats)
-5. [Upgrade Plan](#5-upgrade-plan)
-6. [Change Billing Cycle](#6-change-billing-cycle)
-7. [Update Payment Method](#7-update-payment-method)
-8. [Cancel Subscription](#8-cancel-subscription)
-9. [Get Billing Portal URL](#9-get-billing-portal-url)
+1. [Get Subscription Plans](#1-get-subscription-plans)
+2. [Create Checkout Session](#2-create-checkout-session)
+3. [Get Billing Details](#3-get-billing-details)
+4. [List Invoices](#4-list-invoices)
+5. [Download Invoice](#5-download-invoice)
+6. [Get Usage Stats](#6-get-usage-stats)
+7. [Upgrade Plan](#7-upgrade-plan)
+8. [Change Billing Cycle](#8-change-billing-cycle)
+9. [Update Payment Method](#9-update-payment-method)
+10. [Cancel Subscription](#10-cancel-subscription)
+11. [Get Billing Portal URL](#11-get-billing-portal-url)
 
 ---
 
-## 1. Get Billing Details
+## 1. Get Subscription Plans
+
+Return all active subscription plans with their features. No `vendorId` required — plans are global.
+
+**Request**
+
+```
+GET /api/vendor/billing/plans
+Authorization: Bearer {token}
+```
+
+**Response 200 OK**
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Basic",
+      "description": "For small restaurants",
+      "monthlyPrice": 99.00,
+      "yearlyPrice": 950.00,
+      "currency": "EUR",
+      "isPopular": false,
+      "maxUsers": 3,
+      "features": [
+        {
+          "name": "QR code ordering",
+          "description": "Customers scan & order",
+          "category": "ordering",
+          "isInherited": false
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Errors**
+
+| Status | Condition                |
+|--------|--------------------------|
+| 401    | Missing or invalid token |
+
+---
+
+## 2. Create Checkout Session
+
+Create a Stripe Checkout session to start a subscription payment. The API first
+creates a local subscription with `status = pending`, then returns the URL the
+frontend should use to redirect the vendor to Stripe.
+
+**Request**
+
+```
+POST /api/vendor/{vendorId}/billing/checkout-session
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "planId": 2,
+  "billingCycle": "monthly"
+}
+```
+
+**Body Parameters**
+
+| Name           | Type    | Required | Description                              |
+|----------------|---------|----------|------------------------------------------|
+| `planId`       | integer | yes      | ID of the target `subscription_plans` row |
+| `billingCycle` | string  | yes      | `monthly` or `yearly`                     |
+
+**Response 200 OK**
+
+```json
+{
+  "checkoutUrl": "https://checkout.stripe.com/c/pay/cs_live_...",
+  "subscriptionId": "42"
+}
+```
+
+The pending row is linked to the Stripe Checkout session through
+`stripe_checkout_session_id`. A successful webhook or the authenticated
+`verify-checkout` fallback activates that same row. The scheduled
+`subscriptions:reconcile-stale` command also polls pending Checkout sessions
+older than 10 minutes, so a missed webhook does not leave a paid subscription
+unrecoverable.
+
+**Errors**
+
+| Status | Condition                                                    |
+|--------|--------------------------------------------------------------|
+| 401    | Missing or invalid token                                     |
+| 403    | Token belongs to another vendor                              |
+| 422    | Validation failure, or Stripe price not configured for plan  |
+| 502    | Stripe Checkout session creation failed                      |
+| 503    | Stripe is not configured on the server                       |
+
+---
+
+## 3. Get Billing Details
 
 Retrieve full subscription details including plan, billing cycle, payment method metadata, and next billing date.
 
@@ -38,10 +140,13 @@ Authorization: Bearer {token}
 ```json
 {
   "subscriptionId": 1,
+  "planId": 2,
   "planName": "Professional",
   "billingCycle": "monthly",
   "status": "active",
   "price": 49.00,
+  "currency": "EUR",
+  "maxUsers": 10,
   "interval": "month",
   "nextBillingDate": "2026-05-05",
   "autoRenew": true,
@@ -70,7 +175,7 @@ Authorization: Bearer {token}
 
 ---
 
-## 2. List Invoices
+## 4. List Invoices
 
 Return a paginated list of invoices for the vendor's active subscription.
 
@@ -121,7 +226,7 @@ Authorization: Bearer {token}
 
 ---
 
-## 3. Download Invoice
+## 5. Download Invoice
 
 Retrieve the URL to a PDF or Stripe-hosted invoice page.
 
@@ -150,7 +255,7 @@ Authorization: Bearer {token}
 
 ---
 
-## 4. Get Usage Stats
+## 6. Get Usage Stats
 
 Return current-period usage counters for the vendor's account.
 
@@ -188,7 +293,7 @@ Authorization: Bearer {token}
 
 ---
 
-## 5. Upgrade Plan
+## 7. Upgrade Plan
 
 Switch the vendor's subscription to a different plan. Records a `plan_changed` event.
 
@@ -230,7 +335,7 @@ Content-Type: application/json
 
 ---
 
-## 6. Change Billing Cycle
+## 8. Change Billing Cycle
 
 Switch between `monthly` and `yearly` billing. Recalculates `next_billing_date` and records a `cycle_changed` event.
 
@@ -272,7 +377,7 @@ Content-Type: application/json
 
 ---
 
-## 7. Update Payment Method
+## 9. Update Payment Method
 
 Store or replace the vendor's default payment method. The previous default (if any) is demoted before the new record is saved. Uses `stripe_payment_method_id` as the upsert key.
 
@@ -329,7 +434,7 @@ Content-Type: application/json
 
 ---
 
-## 8. Cancel Subscription
+## 10. Cancel Subscription
 
 Mark the vendor's subscription as cancelled; sets `status = cancelled`, `cancelled_at = now()`, `auto_renew = false`. Records a `subscription_cancelled` event.
 
@@ -362,7 +467,7 @@ No request body required.
 
 ---
 
-## 9. Get Billing Portal URL
+## 11. Get Billing Portal URL
 
 Generate a Stripe Customer Portal session URL. Returns `null` for the URL when the Stripe integration is not configured.
 
@@ -439,7 +544,7 @@ No request body required.
 
 | Table               | Key columns added                                                              |
 |---------------------|--------------------------------------------------------------------------------|
-| `subscriptions`     | `stripe_customer_id`, `cancelled_at`, `paused_at`                             |
+| `subscriptions`     | `stripe_checkout_session_id`, `stripe_customer_id`, `cancelled_at`, `paused_at` |
 | `invoices`          | `vat`, `pdf_url`, `stripe_invoice_id`, `stripe_hosted_url`                    |
 | `payment_methods`   | New table: `vendor_id`, `card_brand`, `last4`, `exp_month`, `exp_year`, `stripe_payment_method_id`, `is_default`, `billing_email` |
 | `subscription_events` | `event_type` values: `plan_changed`, `cycle_changed`, `subscription_cancelled` |

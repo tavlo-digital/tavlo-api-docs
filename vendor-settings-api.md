@@ -78,8 +78,8 @@ Returns the full vendor settings object for a single vendor.
   "enableReviews": true,
   "enableMenuReviews": true,
   "allowAnonymousReviews": false,
-  "defaultLanguage": "en",
-  "supportedLanguages": ["en"],
+  "dashboardLanguage": "de",
+  "supportedLanguages": ["en", "de"],
   "loyaltyEnabled": false,
   "pointsPerEuro": 10,
   "minimumRedemptionPoints": 100,
@@ -96,6 +96,10 @@ Returns the full vendor settings object for a single vendor.
   "dataRetentionDays": null
 }
 ```
+
+`currency` is read-only. It is resolved from the vendor's selected `country`
+using the matching `countries.currency` value and is not stored in
+`vendor_settings`.
 
 ---
 
@@ -123,11 +127,12 @@ Updates one or more vendor settings fields. Only supplied fields are updated (pa
   "businessHours": { "monday": { "open": "10:00", "close": "23:00", "isOpen": true } },
   "acceptOnSite": false,
   "stripeEnabled": true,
-  "currency": "EUR",
   "serviceFeeRate": 5,
   "autoGenerateReceipts": true,
   "loyaltyEnabled": true,
   "redemptionRate": 0.05,
+  "dashboardLanguage": "de",
+  "supportedLanguages": ["en", "de", "it"],
   "dateFormat": "DD.MM.YYYY",
   "timeFormat": "24h",
   "showInTopCustomers": true,
@@ -137,6 +142,30 @@ Updates one or more vendor settings fields. Only supplied fields are updated (pa
 
 ### Response `200 OK`
 Returns the full settings object (same shape as GET).
+
+The update endpoint does not accept or persist `currency`. Updating map
+coordinates (`latitude` and `longitude`) does not change currency.
+
+### Local Formatting Rules
+- `dateFormat`: `DD.MM.YYYY`, `MM/DD/YYYY`, or `YYYY-MM-DD`.
+- `timeFormat`: `24h` or `12h`.
+- Vendor-linked customer API dates, timestamps, and opening hours use these saved formats.
+
+### Language Rules
+- `dashboardLanguage` controls the authenticated vendor interface.
+- `supportedLanguages` controls the language tabs shown to vendors and languages customers may request.
+- English is always inserted first into `supportedLanguages`, even if omitted by the client.
+- Customer menu requests use `?lang={code}` when explicitly selected, otherwise `Accept-Language`; missing, unsupported, or untranslated languages fall back to English.
+- Supported codes are `en`, `de`, `it`, `fr`, `ar`, `tr`, `zh`, `ja`, `sr`, `cs`, `es`, and `nl`.
+- Unsupported language codes return `422`.
+
+### Response `422 Unprocessable Content` (legal guard)
+When `isLiveAndDiscoverable` is set to `true` but the vendor has no approved legal information:
+```json
+{
+  "message": "Legal information must be submitted and approved before your restaurant can go live."
+}
+```
 
 ---
 
@@ -201,7 +230,7 @@ Uploads a cover photo. Previous cover photo is replaced.
 
 **`POST /vendor/{vendorId}/legal-info`**
 
-Submits proposed changes to legally sensitive fields (legal entity name, registration number, VAT number) for admin review. Only one pending request is allowed at a time.
+Submits proposed changes to legally sensitive fields for admin review. If the vendor already has a pending request, the same request is updated in place instead of creating a duplicate.
 
 ### Path Parameters
 | Parameter | Type | Description |
@@ -214,6 +243,7 @@ Submits proposed changes to legally sensitive fields (legal entity name, registr
   "legalEntityName": "My GmbH",
   "businessRegistrationNumber": "FN123456a",
   "vatNumber": "ATU12345678",
+  "companyType": "GmbH",
   "restaurantName": "My Restaurant",
   "country": "Austria",
   "city": "Vienna",
@@ -224,24 +254,36 @@ Submits proposed changes to legally sensitive fields (legal entity name, registr
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `legalEntityName` | Yes | Legal registered name |
-| `businessRegistrationNumber` | Yes | Firmenbuchnummer / Handelsregisternummer |
-| `vatNumber` | Yes | UID / USt-IdNr. |
-| `restaurantName` | No | Public-facing name |
-| `country` | No | Country name |
-| `city` | No | City |
-| `address` | No | Street address |
+| `legalEntityName` | Yes, for first submission | Legal registered name |
+| `businessRegistrationNumber` | Yes, for first submission | Firmenbuchnummer / Handelsregisternummer |
+| `vatNumber` | Yes, for first submission | UID / USt-IdNr. |
+| `companyType` | Yes, for first submission | Legal company type, such as GmbH or AG |
+| `restaurantName` | Yes, for first submission | Public-facing name |
+| `country` | Yes, for first submission | Country name |
+| `city` | Yes, for first submission | City |
+| `address` | Yes, for first submission | Street address |
 | `vendorNotes` | No | Notes for the admin reviewer |
 
+When a pending request already exists, all legal fields are optional. Supplied
+fields update the pending request and omitted fields retain their pending values.
+
 ### Response `201 Created`
+Returned when a new pending request is created.
+
 ```json
 {
   "message": "Legal info submitted for approval."
 }
 ```
 
-### Error Responses
-- `422` — A request is already pending: `"A legal info change request is already pending review."`
+### Response `200 OK`
+Returned when an existing pending request is updated.
+
+```json
+{
+  "message": "Pending legal info updated successfully."
+}
+```
 
 ---
 
@@ -261,6 +303,16 @@ Returns the most recent legal change request for this vendor.
 {
   "id": 1,
   "status": "pending",
+  "legalInfo": {
+    "restaurantName": "My Restaurant",
+    "legalEntityName": "My GmbH",
+    "businessRegistrationNumber": "FN123456a",
+    "vatNumber": "ATU12345678",
+    "companyType": "GmbH",
+    "country": "AT",
+    "city": "Vienna",
+    "address": "Hauptstraße 1, 1010 Wien"
+  },
   "adminNotes": null,
   "vendorNotes": "Company renamed",
   "reviewedAt": null,

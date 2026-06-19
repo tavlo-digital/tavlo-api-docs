@@ -125,7 +125,11 @@ Authorization: Bearer {token}
       },
       "sortOrder": 0,
       "isActive": true,
-      "itemCount": 2
+      "itemCount": 2,
+      "translations": {
+        "en": { "name": "Starters" },
+        "de": { "name": "Vorspeisen" }
+      }
     },
     {
       "id": 32,
@@ -161,6 +165,9 @@ Authorization: Bearer {token}
 | `sortOrder` | integer | Display order |
 | `isActive` | boolean | Whether category is visible |
 | `itemCount` | integer | Count of active items in category |
+| `translations` | object | Language-keyed category names |
+
+The top-level `name` is localized to the vendor's `dashboardLanguage`.
 
 ---
 
@@ -179,7 +186,11 @@ Content-Type: application/json
 ```json
 {
   "masterCategoryId": 2,
-  "taxCategoryId": 2
+  "taxCategoryId": 2,
+  "translations": {
+    "en": { "name": "Drinks" },
+    "de": { "name": "Getränke" }
+  }
 }
 ```
 
@@ -188,6 +199,7 @@ Content-Type: application/json
 |-------|------|----------|-------------|
 | `masterCategoryId` | integer | **Yes** for the vendor UI | Active admin master category ID |
 | `taxCategoryId` | integer | No | Tax category FK. Defaults to food rate for vendor's country |
+| `translations` | object | No | Language-keyed `{ "name": "..." }` values |
 
 **Response `201`:**
 ```json
@@ -237,11 +249,16 @@ Content-Type: application/json
   "masterCategoryId": 1,
   "taxCategoryId": 1,
   "sortOrder": 0,
-  "isActive": true
+  "isActive": true,
+  "translations": {
+    "de": { "name": "Neue Vorspeisen" }
+  }
 }
 ```
 
 **Response `200`:** Same shape as POST response.
+
+Translation updates are partial. Languages omitted from `translations` remain unchanged.
 
 ---
 
@@ -351,12 +368,10 @@ Authorization: Bearer {token}
       "modifierGroupIds": [1],
       "translations": {
         "en": {
-          "language": "en",
           "name": "Bruschetta al Pomodoro",
           "description": "Toasted bread topped with fresh tomatoes."
         },
         "de": {
-          "language": "de",
           "name": "Bruschetta mit Tomaten",
           "description": "Geröstetes Brot mit frischen Tomaten."
         }
@@ -403,6 +418,9 @@ Authorization: Bearer {token}
 | `dietaryPreference` | string\|null | e.g. "vegan", "vegetarian" |
 | `allergens` | array | Relational allergen objects |
 | `tags` | array | Relational tag objects |
+| `paidAddons` | array | Paid add-on objects. Each entry includes a stable `id`, `name`, `price`, optional `taxCategory`, and optional `translations` |
+| `freeAddons` | array | Free add-on objects. Each entry includes a stable `id`, `name`, and optional `translations` |
+| `removableItems` | array | Removable item objects. Each entry includes a stable `id`, `name`, and optional `translations` |
 | `modifierGroups` | array | Linked modifier groups with options |
 | `modifierGroupIds` | array[int] | Linked modifier group IDs in menu-item sort order |
 | `translations` | object | Language-keyed translation objects |
@@ -467,18 +485,16 @@ Content-Type: application/json
   "modifierGroupIds": [1],
   "hasDiscount": true,
   "discountPercent": 15,
-  "translations": [
-    {
-      "language": "de",
+  "translations": {
+    "de": {
       "name": "Caprese Salat",
       "description": "Frische Mozzarella, Tomaten und Basilikum."
     },
-    {
-      "language": "en",
+    "en": {
       "name": "Caprese Salad",
       "description": "Fresh mozzarella, tomatoes, and basil."
     }
-  ],
+  },
   "ingredients": [
     {
       "inventoryItemId": 3,
@@ -507,13 +523,16 @@ Content-Type: application/json
 | `dietaryPreference` | string | No | e.g. "vegan", "vegetarian", "pescetarian" |
 | `allergenIds` | array[int] | No | Array of allergen IDs from `/api/vendor/allergens` |
 | `tagIds` | array[int] | No | Array of special tag IDs from `/api/vendor/special-tags` |
+| `paidAddons` | array | No | Paid add-ons. `id` is preserved when supplied and generated when omitted. `name` and `price` are required for each entry |
+| `paidAddons[].translations` | object | No | Language-keyed add-on names used by customer APIs |
+| `freeAddons` | array | No | Free add-ons. Entries may be strings for legacy clients or objects with `id`, `name`, and `translations` |
+| `removableItems` | array | No | Removable items. Entries may be strings for legacy clients or objects with `id`, `name`, and `translations` |
 | `modifierGroupIds` | array[int] | No | Active modifier group IDs owned by this vendor. Ordering in array is saved as the item's modifier sort order |
 | `hasDiscount` | boolean | No | Default: `false` |
 | `discountPercent` | float | No | 0-100. Required when hasDiscount=true |
-| `translations` | array | No | Array of translation objects |
-| `translations[].language` | string | Yes (in array) | Language code: "en", "de", "tr", "it", "fr", "ar" |
-| `translations[].name` | string | Yes (in array) | Translated name |
-| `translations[].description` | string | No | Translated description |
+| `translations` | object\|array | No | Preferred shape is a language-keyed object; legacy arrays with a `language` field are also accepted |
+| `translations.{language}.name` | string | No | Translated name |
+| `translations.{language}.description` | string | No | Translated description |
 | `ingredients` | array | No | Recipe ingredient links |
 | `ingredients[].inventoryItemId` | integer | Yes (in array) | FK to inventory_items |
 | `ingredients[].quantity` | float | Yes (in array) | Quantity per serving |
@@ -543,13 +562,12 @@ Content-Type: application/json
   "discountPercent": 10,
   "allergenIds": [1, 2],
   "tagIds": [1],
-  "translations": [
-    {
-      "language": "de",
+  "translations": {
+    "de": {
       "name": "Bruschetta mit Tomaten",
       "description": "Geröstetes Brot mit frischen Tomaten, Basilikum und Knoblauch."
     }
-  ]
+  }
 }
 ```
 
@@ -632,8 +650,22 @@ Authorization: Bearer {token}
       "isRequired": true,
       "sortOrder": 0,
       "isActive": true,
+      "translations": {
+        "en": { "name": "Choose a size" },
+        "de": { "name": "Größe wählen" }
+      },
       "options": [
-        { "id": 1, "name": "Small", "priceAdjustment": 0.0, "sortOrder": 0, "isActive": true },
+        {
+          "id": 1,
+          "name": "Small",
+          "priceAdjustment": 0.0,
+          "sortOrder": 0,
+          "isActive": true,
+          "translations": {
+            "en": { "name": "Small" },
+            "de": { "name": "Klein" }
+          }
+        },
         { "id": 2, "name": "Medium", "priceAdjustment": 2.0, "sortOrder": 1, "isActive": true },
         { "id": 3, "name": "Large", "priceAdjustment": 4.0, "sortOrder": 2, "isActive": true }
       ]
@@ -668,12 +700,16 @@ Authorization: Bearer {token}
 | `isRequired` | boolean | Whether customer must select at least minSelection |
 | `sortOrder` | integer | Display order |
 | `isActive` | boolean | Active state |
+| `translations` | object | Language-keyed group names |
 | `options` | array | List of modifier options |
 | `options[].id` | integer | Option ID |
 | `options[].name` | string | Option name |
 | `options[].priceAdjustment` | float | Price change (0 = free, positive = surcharge) |
 | `options[].sortOrder` | integer | Display order |
 | `options[].isActive` | boolean | Active state |
+| `options[].translations` | object | Language-keyed option names |
+
+Top-level group and option names are localized to the vendor's `dashboardLanguage`.
 
 ---
 
@@ -696,8 +732,19 @@ Content-Type: application/json
   "minSelection": 1,
   "maxSelection": 1,
   "isRequired": true,
+  "translations": {
+    "en": { "name": "Cooking Level" },
+    "de": { "name": "Garstufe" }
+  },
   "options": [
-    { "name": "Rare", "priceAdjustment": 0 },
+    {
+      "name": "Rare",
+      "priceAdjustment": 0,
+      "translations": {
+        "en": { "name": "Rare" },
+        "de": { "name": "Blutig" }
+      }
+    },
     { "name": "Medium Rare", "priceAdjustment": 0 },
     { "name": "Well Done", "priceAdjustment": 0 }
   ]
@@ -713,9 +760,11 @@ Content-Type: application/json
 | `maxSelection` | integer | No | Null = unlimited |
 | `isRequired` | boolean | No | Default: `false` |
 | `sortOrder` | integer | No | Default: auto-increment |
+| `translations` | object | No | Language-keyed group names |
 | `options` | array | No | Up to 10 options |
 | `options[].name` | string | Yes (in array) | Option name |
 | `options[].priceAdjustment` | float | No | Default: `0` |
+| `options[].translations` | object | No | Language-keyed option names |
 
 **Response `201`:** Same shape as GET list item.
 
@@ -736,8 +785,16 @@ Content-Type: application/json
 ```json
 {
   "name": "Size",
+  "translations": {
+    "de": { "name": "Größe" }
+  },
   "options": [
-    { "id": 1, "name": "Small", "priceAdjustment": 0 },
+    {
+      "id": 1,
+      "name": "Small",
+      "priceAdjustment": 0,
+      "translations": { "de": { "name": "Klein" } }
+    },
     { "id": 2, "name": "Medium", "priceAdjustment": 2.5 },
     { "name": "Extra Large", "priceAdjustment": 6.0 }
   ]
@@ -748,6 +805,7 @@ Content-Type: application/json
 - Options with `id` are updated
 - Options without `id` are created
 - Options with existing IDs not in the array are **deleted**
+- Translation objects are partial; omitted languages remain unchanged
 
 **Response `200`:** Same shape as GET list item.
 

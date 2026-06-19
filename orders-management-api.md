@@ -469,6 +469,25 @@ This legacy endpoint sets `status → closed` and records `closedAt` on the requ
 
 ---
 
+## 15.1 Customer Notifications
+
+All vendor order actions that modify order or cart item state automatically create notifications for all customers with active sessions at the same table. This enables the customer app to poll for updates.
+
+| Vendor Action | Event | Message |
+|---|---|---|
+| Generic update (`PATCH /api/orders/{orderId}`) | `order_updated` | Your order status has been updated. |
+| Waiter confirm | `order_updated` | Your order has been confirmed by the waiter. |
+| Confirm cash payment | `payment_updated` | Your cash payment has been confirmed. |
+| Mark ready | `order_updated` | Your order is ready! |
+| Update item status | `cart_item_updated` | {Item name} is now being prepared / is ready / has been served. |
+| Mark picked up | `order_updated` | Your order has been picked up. |
+| Mark served | `order_updated` | Your order has been served. Enjoy! |
+| Cancel order | `order_updated` | Your order has been cancelled. |
+
+Customers can retrieve notifications via `GET /api/customer/notifications` (see Customer API docs §4.10).
+
+---
+
 ## 16. Error Reference
 
 | HTTP Code | Meaning |
