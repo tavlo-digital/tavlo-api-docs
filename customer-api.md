@@ -1496,6 +1496,60 @@ When a table is already active, another customer can join that same table flow b
 
 ---
 
+### 3.12.1 Check My Table Session Status 🔒
+
+**GET** `/api/customer/table/session/status`
+
+Checks whether the authenticated customer still has an active table session. No QR token, table ID, or request body is required.
+
+**Authentication:** required (Bearer token).
+
+**Request body:** none.
+
+**Response (200) — active session:**
+
+```json
+{
+    "active": true,
+    "session": {
+        "id": "13",
+        "status": "active",
+        "scannedAt": "23.04.2026 10:17"
+    },
+    "table": {
+        "id": "5",
+        "number": 3,
+        "name": "T3"
+    },
+    "vendor": {
+        "id": "V-ABC123",
+        "name": "Bella Italia",
+        "currency": "EUR"
+    }
+}
+```
+
+**Response (200) — no active session:**
+
+```json
+{
+    "active": false,
+    "session": null,
+    "table": null,
+    "vendor": null
+}
+```
+
+Only sessions belonging to the authenticated customer with `status = "active"` are considered. Active sessions belonging to other customers are ignored.
+
+**Response (401):**
+
+```json
+{ "message": "Unauthenticated." }
+```
+
+---
+
 ### 3.13 Close Table Session 🔒
 
 **POST** `/api/customer/table/close`
@@ -2651,6 +2705,8 @@ Returns a structured receipt payload for a paid order, including restaurant lega
 
 **Authentication:** required (Bearer token).
 
+**Language header:** `Accept-Language: ar` (or another restaurant-enabled language). Menu item, add-on, removal, and selected modifier names use this language and fall back to English when unavailable. The legal receipt locale remains English plus the vendor country code.
+
 **Rules:**
 
 - The order must belong to the authenticated customer.
@@ -2687,6 +2743,29 @@ Returns a structured receipt payload for a paid order, including restaurant lega
                     "quantity": 2,
                     "unit_price_gross": 8.9,
                     "line_gross": 17.8,
+                    "paid_addons": [
+                        {
+                            "id": 5,
+                            "name": "Cheese sauce",
+                            "price": 1.65,
+                            "vat_rate": 10
+                        }
+                    ],
+                    "free_addons": ["Ketchup"],
+                    "removed_items": ["Salt"],
+                    "selected_modifiers": [
+                        {
+                            "modifier_group_id": 1,
+                            "name": "Choose your side",
+                            "options": [
+                                {
+                                    "id": 2,
+                                    "name": "Onion Rings",
+                                    "price_adjustment": 1.65
+                                }
+                            ]
+                        }
+                    ],
                     "tax_category": "FOOD",
                     "vat_rate": 10
                 },
@@ -2696,6 +2775,10 @@ Returns a structured receipt payload for a paid order, including restaurant lega
                     "quantity": 1,
                     "unit_price_gross": 9.9,
                     "line_gross": 9.9,
+                    "paid_addons": [],
+                    "free_addons": [],
+                    "removed_items": [],
+                    "selected_modifiers": [],
                     "tax_category": "BEVERAGE_ALCOHOLIC",
                     "vat_rate": 20
                 }
@@ -2761,6 +2844,8 @@ Returns a structured receipt payload for a paid order, including restaurant lega
 | `receipt.invoice_number`             | Auto-generated from `vendor_settings.invoice_prefix` + `next_invoice_number` | Persisted on `orders.invoice_number` after first access |
 | `receipt.locale`                     | English + vendor country code                                                | e.g. `en-AT`, `en-DE`                                   |
 | `receipt.table`                      | From `table_scan_session` → `restaurant_tables.name` or `Table {number}`     | `null` if no table session                              |
+| `order.items[].name`                 | Live menu item name resolved from `menu_item_id`                             | Localized using `Accept-Language`                       |
+| `order.items[].paid_addons`, `free_addons`, `removed_items`, `selected_modifiers` | Selected customization IDs or legacy names matched to current menu definitions | Names localized using `Accept-Language`                 |
 | `order.items[].tax_category`         | Uppercased `menu_items.tax_category`                                         | e.g. `FOOD`, `BEVERAGE_ALCOHOLIC`                       |
 | `payment.status`                     | `CONFIRMED` when `payment_received = true`                                   |                                                         |
 | `payment.transaction_id`             | `orders.transaction_id` or `order_payments.stripe_payment_intent_id`         |                                                         |

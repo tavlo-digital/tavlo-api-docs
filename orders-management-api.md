@@ -25,7 +25,8 @@ Authenticated endpoints require a token obtained via `POST /api/vendor/login`. V
 13. [Fire Next Course](#13-fire-next-course)
 14. [Close Legacy Table Session](#14-close-legacy-table-session)
 15. [Response Schemas](#15-response-schemas)
-16. [Error Reference](#16-error-reference)
+16. [Realtime Notifications](#16-realtime-notifications)
+17. [Error Reference](#17-error-reference)
 
 ---
 
@@ -40,7 +41,9 @@ Dine-in orders are grouped from active `table_scan_sessions`, not the legacy `ta
 - The group exposes `tableId`, `sessionIds`, guest count, orders, totals, payment state, and kitchen summary.
 - The waiter close-table endpoint closes all active scan sessions for that table (`POST /api/vendor/{vendorId}/tables/{tableId}/close-session`).
 
-### Batch Consolidation Window
+### Batch Consolidation Window [Legacy]
+
+> **Deprecation Notice:** Batch consolidation only applies to the legacy `table_sessions` model. Orders placed through the current QR-scan flow (`table_scan_sessions`) are sent directly to the kitchen with no batching. These endpoints will be removed in a future release once the feature is re-implemented on the new model.
 
 After the first order arrives at a table, a **90-second batch window** opens. Additional orders placed during this window are held together before being released to the kitchen. This allows a table to order drinks + starters together rather than firing each item separately.
 
@@ -51,7 +54,9 @@ After the first order arrives at a table, a **90-second batch window** opens. Ad
 
 The vendor can release the batch immediately using `POST .../release`.
 
-### Course Sequence
+### Course Sequence [Legacy]
+
+> **Deprecation Notice:** Course management only applies to the legacy `table_sessions` model. Orders placed through the current QR-scan flow (`table_scan_sessions`) do not support course sequencing. These endpoints will be removed in a future release once the feature is re-implemented on the new model.
 
 Each session tracks a `currentCourse`. The progression is:
 
@@ -312,7 +317,9 @@ Cancels an order. Sets `status → cancelled`, records `cancelledAt`, and option
 
 ---
 
-## 12. Release Batch to Kitchen
+## 12. Release Batch to Kitchen [Legacy]
+
+> **Deprecated:** This endpoint operates on the legacy `table_sessions` model only. It has no effect on QR-scan sessions (`table_scan_sessions`). It will be removed in a future release.
 
 ### `POST /api/vendor/{vendorId}/sessions/{sessionId}/release`
 
@@ -324,7 +331,9 @@ Immediately releases the current batch to the kitchen, overriding the batch wind
 
 ---
 
-## 13. Fire Next Course
+## 13. Fire Next Course [Legacy]
+
+> **Deprecated:** This endpoint operates on the legacy `table_sessions` model only. It has no effect on QR-scan sessions (`table_scan_sessions`). It will be removed in a future release.
 
 ### `POST /api/vendor/{vendorId}/sessions/{sessionId}/fire-course`
 
@@ -488,7 +497,85 @@ Customers can retrieve notifications via `GET /api/customer/notifications` (see 
 
 ---
 
-## 16. Error Reference
+## 16. Realtime Notifications
+
+Vendor owners, kitchen staff, and waiters use the same authenticated notification API. Results are scoped to the authenticated actor; customer-targeted notifications are never returned to vendor actors.
+
+### 16.1 Get Supabase Realtime Token
+
+**GET** `/api/vendor/realtime/token`  
+**Authentication:** Required (`vendor` or active `team_member`)  
+**Request body:** None
+
+Returns a short-lived ES256 JWT for subscribing to `public.notifications` through Supabase `postgres_changes`.
+
+```json
+{
+  "token": "eyJhbGciOiJFUzI1NiIs...",
+  "expires_at": "2026-06-20T12:15:00.000000Z"
+}
+```
+
+The server requires `SUPABASE_URL`, `SUPABASE_REALTIME_SIGNING_KEY`, and `SUPABASE_REALTIME_SIGNING_KEY_ID`. The signing key must be an EC private key whose public key is registered in the Supabase project's JWT signing keys.
+
+### 16.2 List Notifications
+
+**GET** `/api/vendor/notifications`  
+**Authentication:** Required (`vendor`, `kitchen`, or `waiter`)  
+**Headers:** Optional `Accept-Language`  
+**Request body:** None
+
+```json
+{
+  "notifications": [
+    {
+      "id": 91,
+      "event": "order_confirmed",
+      "message": "New order #41 for Table 7.",
+      "metadata": {
+        "resources": ["orders", "tables", "dashboard", "notifications"],
+        "order_id": 41,
+        "table_id": 7,
+        "severity": "urgent",
+        "sound": "new_order"
+      },
+      "read": false,
+      "created_at": "20.06.2026 12:00"
+    }
+  ],
+  "unread_count": 1
+}
+```
+
+Silent realtime invalidations are not included in this response or the unread count.
+
+### 16.3 Mark Notification Read
+
+**PATCH** `/api/vendor/notifications/{id}/read`  
+**Authentication:** Required; the notification must belong to the authenticated actor  
+**Request body:** None
+
+```json
+{ "message": "Notification marked as read." }
+```
+
+### 16.4 Mark All Notifications Read
+
+**POST** `/api/vendor/notifications/read-all`  
+**Authentication:** Required  
+**Request body:** None
+
+```json
+{ "message": "All notifications marked as read." }
+```
+
+### 16.5 Realtime Subscription
+
+After obtaining the token, call `supabase.realtime.setAuth(token)` and subscribe to `public.notifications`. Use `vendor_id`, `waiter_id`, or `kitchen_id` as the client filter according to the authenticated actor. PostgreSQL RLS is the authorization boundary; clients must refetch the Laravel resource APIs listed in `metadata.resources` after an event.
+
+---
+
+## 17. Error Reference
 
 | HTTP Code | Meaning |
 |---|---|
@@ -496,6 +583,7 @@ Customers can retrieve notifications via `GET /api/customer/notifications` (see 
 | `403 Forbidden` | Token belongs to a different vendor |
 | `404 Not Found` | Order or session does not exist or belongs to another vendor |
 | `422 Unprocessable Entity` | Validation failed (e.g. firing next course when already on desserts) |
+| `503 Service Unavailable` | Supabase Realtime signing is not configured |
 | `500 Internal Server Error` | Unexpected server error |
 
 ---
@@ -514,6 +602,10 @@ Customers can retrieve notifications via `GET /api/customer/notifications` (see 
 | `PATCH` | `/api/orders/{orderId}/picked-up` | Mark order picked up (takeaway) |
 | `PATCH` | `/api/orders/{orderId}/served` | Mark order served (dine-in) |
 | `PATCH` | `/api/orders/{orderId}/cancel` | Cancel order |
-| `POST` | `/api/vendor/{vendorId}/sessions/{sessionId}/release` | Release batch to kitchen now |
-| `POST` | `/api/vendor/{vendorId}/sessions/{sessionId}/fire-course` | Advance to next course |
-| `POST` | `/api/vendor/{vendorId}/sessions/{sessionId}/close` | Close legacy table session |
+| `POST` | `/api/vendor/{vendorId}/sessions/{sessionId}/release` | [Legacy] Release batch to kitchen now |
+| `POST` | `/api/vendor/{vendorId}/sessions/{sessionId}/fire-course` | [Legacy] Advance to next course |
+| `POST` | `/api/vendor/{vendorId}/sessions/{sessionId}/close` | [Legacy] Close legacy table session |
+| `GET` | `/api/vendor/realtime/token` | Get a short-lived Supabase Realtime JWT |
+| `GET` | `/api/vendor/notifications` | List actor-scoped notifications |
+| `PATCH` | `/api/vendor/notifications/{id}/read` | Mark one notification read |
+| `POST` | `/api/vendor/notifications/read-all` | Mark all actor notifications read |
