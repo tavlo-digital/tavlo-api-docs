@@ -319,6 +319,7 @@ Authorization: Bearer {token}
   "data": [
     {
       "id": 40,
+      "productUid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       "categoryId": 26,
       "categoryName": "Antipasti",
       "name": "Bruschetta al Pomodoro",
@@ -577,13 +578,24 @@ Content-Type: application/json
 - `ingredients` — providing this **replaces** all ingredients
 - VAT is automatically recalculated if `taxCategoryId` changes
 
+**Versioning behavior:** When any of the following fields change, the system creates a **new version** of the menu item (old row is soft-deleted, new row is created with the same `productUid`):
+- `price`, `hasDiscount`, `discountPercent` — price-affecting fields
+- `taxCategory`, `taxCategoryId` — changes gross price via VAT
+- `paidAddons` — addon price changed or addon removed
+- `freeAddons` — addon removed
+- `modifierGroupIds` — modifier group added or removed
+
+Non-versioned fields (`name`, `description`, `imageUrl`, `available`, `calories`, etc.) update in-place without creating a new version.
+
+When a new version is created, the response returns the **new item's `id`** (different from the original). The `productUid` remains the same across all versions. Existing cart items and orders continue to reference the old version, preserving historical prices.
+
 **Response `200`:** Same shape as GET single item.
 
 ---
 
 ### DELETE `/api/vendor/menu/items/{itemId}`
 
-Deletes a menu item. If the item exists in orders, it is **soft deleted** (`isActive = false`) instead.
+Always **soft-deletes** the menu item (sets `isActive = false` and marks as deleted). The row is preserved to maintain historical price data for existing cart items and orders.
 
 **Request:**
 ```
@@ -591,17 +603,10 @@ DELETE /api/vendor/menu/items/40
 Authorization: Bearer {token}
 ```
 
-**Response `200` — Hard delete (item has no orders):**
+**Response `200`:**
 ```json
 {
   "message": "Menu item deleted"
-}
-```
-
-**Response `200` — Soft delete (item referenced in orders):**
-```json
-{
-  "message": "Menu item hidden (soft deleted — referenced in orders)"
 }
 ```
 
@@ -1003,10 +1008,13 @@ menu_categories ──FK──→ tax_categories (system controlled)
                 └── menu_item_ingredients ──→ inventory_items
 ```
 
-### Soft Delete Behavior
-- Items in orders: `is_active = false` (hidden, preserved in DB)
-- Items not in orders: permanent hard delete
+### Soft Delete & Versioning Behavior
+- All menu item deletions are **soft deletes** — the row is preserved with `is_active = false` and `deleted_at` set
+- When a price-affecting field is updated (`price`, `hasDiscount`, `discountPercent`, `taxCategory`, `paidAddons`, `freeAddons`, `modifierGroupIds`), the old item is soft-deleted and a **new version** is created with the same `productUid`
+- `productUid` (UUID) links all versions of the same logical product
 - Soft-deleted items are excluded from all GET endpoints
+- Cart items and order items reference specific menu item versions, preserving historical prices
+- Modifier groups and modifier options also use soft deletes
 
 ### Tax Calculation
 - VAT rates are system-controlled per country — vendors cannot override

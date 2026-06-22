@@ -1083,6 +1083,22 @@ Returns all public (non-flagged) reviews for a restaurant, with reviewer info an
                     "quantity": 2
                 }
             ],
+            "item_reviews": [
+                {
+                    "menu_item_id": 42,
+                    "menu_item_name": "4 Piece chicken Box",
+                    "menu_item_image": "http://localhost:8000/media/menu-items/42/photo/abc123.jpg",
+                    "rating": 5,
+                    "text": "Perfectly crispy!"
+                },
+                {
+                    "menu_item_id": 57,
+                    "menu_item_name": "Caesar Salad",
+                    "menu_item_image": "http://localhost:8000/media/menu-items/57/photo/def456.jpg",
+                    "rating": 4,
+                    "text": null
+                }
+            ],
             "vendor_reply": "Thank you for the kind words!",
             "vendor_replied_at": "19.04.2026 08:10"
         }
@@ -1109,6 +1125,7 @@ Returns all public (non-flagged) reviews for a restaurant, with reviewer info an
 
 - Only non-flagged reviews are returned.
 - `menu_items` is derived from `cart_items` linked to the review's paid order: owned rows where `cart_items.order_id` matches the review order, plus shared rows whose `shared_order_ids` include that order ID. Each entry includes the item `name`, `quantity` ordered, and — when the vendor still has a matching menu item — its `id`, `slug`, and `image_url`. `id`, `name`, `slug`, and `image_url` are `null` if the menu item can no longer be resolved.
+- `item_reviews` contains per-item ratings and review text submitted by the customer. Each entry includes the `menu_item_id`, `menu_item_name`, `menu_item_image`, `rating` (1–5), and optional `text`.
 - `images` is an array of image URLs uploaded by the reviewer (may be empty).
 - `reviewer.name` falls back to `"Anonymous"` if the customer has no name set.
 - `created_at` and `vendor_replied_at` use the vendor's saved date and time formats.
@@ -3582,7 +3599,42 @@ Removes the given restaurant from the authenticated customer's favorites.
 
 **Query Parameters:** `per_page`, `page`
 
-Review `created_at`, `updated_at`, and `vendor_replied_at` fields use each review vendor's saved date/time formats.
+Review `created_at`, `updated_at`, and `vendor_replied_at` fields use each review vendor's saved date/time formats. Each review includes its per-item ratings in the `items` array.
+
+**Response (200):**
+
+```json
+{
+    "data": [
+        {
+            "review_public_id": "rev_abc123...",
+            "order_id": "ord-aB3xK9pQrS12",
+            "rating": 5,
+            "text": "Amazing food and service!",
+            "images": [],
+            "vendor": {
+                "vendor_public_id": "V-ABC123",
+                "restaurant_name": "Bella Italia"
+            },
+            "items": [
+                {
+                    "cart_item_id": 1,
+                    "menu_item_id": 42,
+                    "menu_item_name": "Margherita Pizza",
+                    "menu_item_image": "http://localhost:8000/media/menu-items/42/photo.jpg",
+                    "rating": 5,
+                    "text": "Best pizza I've ever had"
+                }
+            ],
+            "vendor_reply": null,
+            "vendor_replied_at": null,
+            "flagged": false,
+            "created_at": "06/21/2026 2:30 PM",
+            "updated_at": "06/21/2026 2:30 PM"
+        }
+    ]
+}
+```
 
 ---
 
@@ -3590,23 +3642,74 @@ Review `created_at`, `updated_at`, and `vendor_replied_at` fields use each revie
 
 **POST** `/api/customer/reviews`
 
+Reviews are per-order. The customer rates each item individually and provides an overall order rating.
+
 **Body:**
 
 ```json
 {
-    "vendor_public_id": "V-ABC123",
+    "order_id": "ord-aB3xK9pQrS12",
     "rating": 5,
-    "review": "Amazing food and service!"
+    "review": "Amazing food and service!",
+    "items": [
+        {
+            "cart_item_id": 1,
+            "rating": 5,
+            "review": "Best pizza I've ever had"
+        },
+        {
+            "cart_item_id": 2,
+            "rating": 4,
+            "review": "Good salad, dressing was a bit heavy"
+        }
+    ]
 }
 ```
 
 **Validation:**
 
-- `vendor_public_id`: required, must identify an existing vendor
-- `rating`: required, integer, 1–5
-- `review`: nullable, string, max 2000
-- Customer must have at least one paid, non-draft order with the vendor
-- One review per customer/vendor
+- `order_id`: required, the order's `order_public_id`
+- `rating`: required, integer, 1–5 (overall order rating)
+- `review`: nullable, string, max 2000 (overall order review text)
+- `items`: required, array, min 1 item
+- `items.*.cart_item_id`: required, integer, must belong to the order
+- `items.*.rating`: required, integer, 1–5
+- `items.*.review`: nullable, string, max 1000
+
+**Eligibility:**
+
+- The order must belong to the authenticated customer
+- The order must be paid (`payment_received = true`)
+- All cart items in the order must be served (`served_at` is set)
+- One review per order
+
+**Side effects:**
+
+- Each reviewed menu item's `rating` and `review_count` are recalculated from all `review_items` for that menu item.
+
+**Response (201):**
+
+```json
+{
+    "message": "Review submitted.",
+    "review": {
+        "review_public_id": "rev_abc123...",
+        "order_id": "ord-aB3xK9pQrS12",
+        "rating": 5,
+        "text": "Amazing food and service!",
+        "items": [
+            {
+                "cart_item_id": 1,
+                "menu_item_id": 42,
+                "menu_item_name": "Margherita Pizza",
+                "menu_item_image": "http://localhost:8000/media/menu-items/42/photo.jpg",
+                "rating": 5,
+                "text": "Best pizza I've ever had"
+            }
+        ]
+    }
+}
+```
 
 ---
 
@@ -3614,14 +3717,25 @@ Review `created_at`, `updated_at`, and `vendor_replied_at` fields use each revie
 
 **PATCH** `/api/customer/reviews/{reviewPublicId}`
 
+Can update the overall rating/text and optionally update per-item ratings.
+
 **Body:**
 
 ```json
 {
     "rating": 4,
-    "text": "Updated review text"
+    "text": "Updated review text",
+    "items": [
+        {
+            "cart_item_id": 1,
+            "rating": 4,
+            "review": "Updated item review"
+        }
+    ]
 }
 ```
+
+All fields are optional. If `items` is provided, each item is upserted (created or updated) by `cart_item_id`. Menu item ratings are recalculated.
 
 ---
 
@@ -3629,11 +3743,7 @@ Review `created_at`, `updated_at`, and `vendor_replied_at` fields use each revie
 
 **DELETE** `/api/customer/reviews/{reviewPublicId}`
 
-**Body:**
-
-```json
-{}
-```
+Deletes the review and all associated item reviews. Menu item ratings are recalculated.
 
 ---
 
