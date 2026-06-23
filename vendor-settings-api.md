@@ -80,6 +80,10 @@ Returns the full vendor settings object for a single vendor.
   "allowAnonymousReviews": false,
   "dashboardLanguage": "de",
   "supportedLanguages": ["en", "de"],
+  "availableLanguages": [
+    { "code": "en", "name": "English", "nativeName": "English", "flag": "🇬🇧", "direction": "ltr" },
+    { "code": "de", "name": "German", "nativeName": "Deutsch", "flag": "🇩🇪", "direction": "ltr" }
+  ],
   "loyaltyEnabled": false,
   "pointsPerEuro": 10,
   "minimumRedemptionPoints": 100,
@@ -156,7 +160,7 @@ coordinates (`latitude` and `longitude`) does not change currency.
 - `supportedLanguages` controls the language tabs shown to vendors and languages customers may request.
 - English is always inserted first into `supportedLanguages`, even if omitted by the client.
 - Customer menu requests use `?lang={code}` when explicitly selected, otherwise `Accept-Language`; missing, unsupported, or untranslated languages fall back to English.
-- Supported codes are `en`, `de`, `it`, `fr`, `ar`, `tr`, `zh`, `ja`, `sr`, `cs`, `es`, and `nl`.
+- Supported codes are managed by administrators under **Admin → Languages** and returned in `availableLanguages`.
 - Unsupported language codes return `422`.
 
 ### Response `422 Unprocessable Content` (legal guard)

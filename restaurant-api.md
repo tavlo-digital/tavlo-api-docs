@@ -39,6 +39,7 @@ assigned features, and a dynamically generated comparison table.
       {
         "id": "basic",
         "name": "Basic",
+        "link": "https://vendor.example.com/activate?plan=1",
         "prices": {
           "monthly": {
             "amount": 99,
@@ -87,4 +88,7 @@ assigned features, and a dynamically generated comparison table.
 Only plans where `subscription_plans.is_active = true` are returned. Plan and
 feature IDs in this response are URL-friendly slugs generated from their admin
 names. `monthlyEquivalent` is calculated from the saved yearly price divided by
-12.
+12. Each plan's `link` uses `VENDOR_FRONTEND_URL` and opens the vendor
+subscription flow for that plan. Logged-out users are sent to login, can switch
+to registration if needed, and return to the selected subscription after
+authentication.

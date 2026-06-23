@@ -891,7 +891,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
         "fat": 32.5,
         "carbs": 45.0,
         "protein": 38.0,
-        "dietary_preference": null,
+        "dietary_preference": "Vegetarian",
         "paid_addons": [
             { "id": 5, "name": "Extra cheese", "price": 1.65, "vat_rate": 10 }
         ],
@@ -941,7 +941,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 - `modifier_groups` include `vat_rate` at the group level. Option `price_adjustment` values are gross.
 - `free_addons` and `removable_items` remain legacy name arrays for display compatibility.
 - `modifier_groups` are reusable vendor-defined option groups attached to the item. Only active groups and options are returned.
-- Item names/descriptions, category names, modifier group names, and option names all use the same resolved locale.
+- Item names/descriptions, category names, modifier group names, option names, allergen names, tag labels, and dietary preference names all use the same resolved locale.
 - The response includes `Content-Language` with the resolved locale.
 - The response includes `Vary: Accept-Language` for language-aware caching.
 
@@ -975,7 +975,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
     "fat": 32.5,
     "carbs": 45.0,
     "protein": 38.0,
-    "dietary_preference": null,
+    "dietary_preference": "Vegetarian",
     "paid_addons": [{ "id": 5, "name": "Extra cheese", "price": 1.65, "vat_rate": 10 }],
     "free_addons": ["Ketchup"],
     "free_addon_options": [{ "id": 8, "name": "Ketchup" }],
@@ -1024,8 +1024,8 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 - Only active and currently available items are returned by this endpoint; unavailable items return 404.
 - `ingredients` is a list of ingredient names (from the JSON column).
 - `fat`, `carbs`, `protein` are in grams; `null` if not set.
-- `dietary_preference` can be `vegetarian`, `vegan`, `gluten_free`, etc. or `null`.
-- `allergens` and `tags` include `icon` for UI display.
+- `dietary_preference` is the localized dietary preference name (for example, `Vegetarian` or `Vegetarisch`), or `null`.
+- `allergens` and `tags` include `icon` for UI display. Names/labels are locale-aware (resolved from translation tables).
 - `modifier_groups` shows customisation options — `type` is `single` or `multiple`, with `min_selection`/`max_selection` constraints. Group-level `vat_rate` applies to all options.
 - `discount_percent` and `discounted_price` are only present when `has_discount` is `true`.
 - Only active modifier groups and options are returned.

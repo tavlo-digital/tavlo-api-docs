@@ -841,7 +841,7 @@ These endpoints return the system-wide lists used to populate dropdowns in the U
 
 ### GET `/api/vendor/allergens`
 
-Returns all system allergens (EU standard 14 major allergens + extras).
+Returns all system allergens (EU standard 14 major allergens + extras). Names are returned in the vendor's dashboard language.
 
 **Request:**
 ```
@@ -853,7 +853,7 @@ Authorization: Bearer {token}
 ```json
 {
   "data": [
-    { "id": 1, "name": "Gluten", "icon": "🌾" },
+    { "id": 1, "key": "Gluten", "name": "Gluten", "icon": "🌾", "translations": { "en": { "name": "Gluten" }, "de": { "name": "Gluten" } } },
     { "id": 2, "name": "Dairy", "icon": "🥛" },
     { "id": 3, "name": "Eggs", "icon": "🥚" },
     { "id": 4, "name": "Nuts", "icon": "🥜" },
@@ -869,9 +869,36 @@ Authorization: Bearer {token}
 
 ---
 
+### GET `/api/vendor/dietary-preferences`
+
+Returns active dietary preferences in the vendor's dashboard language.
+
+**Authentication:** Vendor or team-member bearer token required.
+
+**Request:** No request body.
+
+```http
+GET /api/vendor/dietary-preferences
+Authorization: Bearer {token}
+```
+
+**Response `200`:**
+
+```json
+{
+  "data": [
+    { "id": 1, "slug": "vegetarian", "name": "Vegetarian", "icon": "🥬", "translations": { "en": { "name": "Vegetarian" }, "de": { "name": "Vegetarisch" } } },
+    { "id": 2, "slug": "vegan", "name": "Vegan", "icon": "🌱" },
+    { "id": 3, "slug": "pescetarian", "name": "Pescetarian", "icon": "🐟" }
+  ]
+}
+```
+
+---
+
 ### GET `/api/vendor/special-tags`
 
-Returns all system special tags available for menu items.
+Returns all system special tags available for menu items. Labels are returned in the vendor's dashboard language.
 
 **Request:**
 ```
@@ -883,7 +910,7 @@ Authorization: Bearer {token}
 ```json
 {
   "data": [
-    { "id": 1, "slug": "recommended", "label": "Recommended", "icon": "⭐" },
+    { "id": 1, "slug": "recommended", "label": "Recommended", "icon": "⭐", "translations": { "en": { "label": "Recommended" }, "de": { "label": "Empfohlen" } } },
     { "id": 2, "slug": "chefs-pick", "label": "Chef's Pick", "icon": "👨‍🍳" },
     { "id": 3, "slug": "todays-special", "label": "Today's Special", "icon": "🌟" },
     { "id": 4, "slug": "organic", "label": "Organic / Bio", "icon": "🌿" },
@@ -896,6 +923,136 @@ Authorization: Bearer {token}
   ]
 }
 ```
+
+---
+
+## Admin Dietary Preference, Allergen & Special Tag Management
+
+Admins manage dietary preferences at `/admin/dietary-preferences`, alongside allergens and special tags. All three support multi-language translations.
+
+### GET `/api/admin/allergens`
+
+Returns all allergens with their translations.
+
+**Request:**
+```
+GET /api/admin/allergens
+Authorization: Bearer {admin-token}
+```
+
+**Response `200`:**
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Gluten",
+      "icon": "🌾",
+      "sortOrder": 0,
+      "isActive": true,
+      "translations": {
+        "en": { "name": "Gluten" },
+        "de": { "name": "Gluten" },
+        "fr": { "name": "Gluten" }
+      }
+    }
+  ]
+}
+```
+
+### POST `/api/admin/allergens`
+
+Creates a new allergen with optional translations.
+
+**Request body:**
+```json
+{
+  "name": "Celery",
+  "icon": "🌿",
+  "sortOrder": 10,
+  "isActive": true,
+  "translations": {
+    "de": { "name": "Sellerie" },
+    "fr": { "name": "Celeri" }
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | English name |
+| `icon` | string | No | Emoji icon |
+| `sortOrder` | int | No | Sort position |
+| `isActive` | bool | No | Active state (default: true) |
+| `translations` | object | No | Keyed by language code, value `{ "name": "..." }` |
+
+### PATCH `/api/admin/allergens/{id}`
+
+Updates an allergen and/or its translations. Same fields as POST, all optional.
+
+### DELETE `/api/admin/allergens/{id}`
+
+Deletes an allergen and all its translations.
+
+---
+
+### GET `/api/admin/special-tags`
+
+Returns all special tags with their translations.
+
+**Response `200`:**
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "slug": "recommended",
+      "label": "Recommended",
+      "icon": "⭐",
+      "sortOrder": 0,
+      "isActive": true,
+      "translations": {
+        "en": { "label": "Recommended" },
+        "de": { "label": "Empfohlen" }
+      }
+    }
+  ]
+}
+```
+
+### POST `/api/admin/special-tags`
+
+Creates a new special tag with optional translations.
+
+**Request body:**
+```json
+{
+  "label": "Seasonal",
+  "slug": "seasonal",
+  "icon": "🍂",
+  "translations": {
+    "de": { "label": "Saisonal" },
+    "fr": { "label": "Saisonnier" }
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `label` | string | Yes | English label |
+| `slug` | string | No | URL-safe slug (auto-generated from label if omitted) |
+| `icon` | string | No | Emoji icon |
+| `sortOrder` | int | No | Sort position |
+| `isActive` | bool | No | Active state (default: true) |
+| `translations` | object | No | Keyed by language code, value `{ "label": "..." }` |
+
+### PATCH `/api/admin/special-tags/{id}`
+
+Updates a special tag and/or its translations. Same fields as POST, all optional.
+
+### DELETE `/api/admin/special-tags/{id}`
+
+Deletes a special tag and all its translations.
 
 ---
 
