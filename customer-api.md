@@ -3608,10 +3608,12 @@ Review `created_at`, `updated_at`, and `vendor_replied_at` fields use each revie
     "data": [
         {
             "review_public_id": "rev_abc123...",
-            "order_id": "ord-aB3xK9pQrS12",
+            "session_scan_table_id": 81,
             "rating": 5,
             "text": "Amazing food and service!",
-            "images": [],
+            "photos": [
+                "http://localhost:8000/media/reviews/rev_abc123/photos/table.jpg"
+            ],
             "vendor": {
                 "vendor_public_id": "V-ABC123",
                 "restaurant_name": "Bella Italia"
@@ -3623,7 +3625,10 @@ Review `created_at`, `updated_at`, and `vendor_replied_at` fields use each revie
                     "menu_item_name": "Margherita Pizza",
                     "menu_item_image": "http://localhost:8000/media/menu-items/42/photo.jpg",
                     "rating": 5,
-                    "text": "Best pizza I've ever had"
+                    "text": "Best pizza I've ever had",
+                    "photos": [
+                        "http://localhost:8000/media/reviews/rev_abc123/items/1/pizza.jpg"
+                    ]
                 }
             ],
             "vendor_reply": null,
@@ -3638,50 +3643,103 @@ Review `created_at`, `updated_at`, and `vendor_replied_at` fields use each revie
 
 ---
 
-### 8.2 Create Review
+### 8.2 Get Reviewable Session Orders
 
-**POST** `/api/customer/reviews`
+**GET** `/api/customer/reviews/session/{sessionScanTableId}`
 
-Reviews are per-order. The customer rates each item individually and provides an overall order rating.
+**Authentication:** required (`auth:customer`).
 
-**Body:**
+**Request body:** none.
+
+Checks whether the authenticated customer can review the table scan session and returns every order and cart item that can be included in the session review.
+
+**Eligibility:**
+
+- The session must belong to the authenticated customer.
+- The session must not have been reviewed before.
+- The session must contain at least one order and at least one cart item.
+- Every order in the session must be paid (`payment_received = true`).
+- Every cart item in those orders, including shared items charged to the order, must be served (`served_at` is set).
+
+**Response (200):**
 
 ```json
 {
-    "order_id": "ord-aB3xK9pQrS12",
-    "rating": 5,
-    "review": "Amazing food and service!",
-    "items": [
+    "session_scan_table_id": 81,
+    "orders": [
         {
-            "cart_item_id": 1,
-            "rating": 5,
-            "review": "Best pizza I've ever had"
-        },
-        {
-            "cart_item_id": 2,
-            "rating": 4,
-            "review": "Good salad, dressing was a bit heavy"
+            "order_id": "ord-aB3xK9pQrS12",
+            "total_amount_paid": 27.5,
+            "items": [
+                { "cart_item_id": 1 },
+                { "cart_item_id": 2 }
+            ]
         }
     ]
 }
 ```
 
+`total_amount_paid` includes the order amount and its tip.
+
+**Response (422):**
+
+The response uses `errors.session_scan_table_id` with one of these messages:
+
+- `This session has no orders.`
+- `This session has no order items.`
+- `All orders must be paid before you can review this session.`
+- `Items are not served yet.`
+- `You have already reviewed this session.`
+
+---
+
+### 8.3 Create Review
+
+**POST** `/api/customer/reviews`
+
+**Authentication:** required (`auth:customer`).
+
+**Content-Type:** `multipart/form-data`.
+
+Reviews are per table scan session. The customer provides one overall session review and can rate cart items from any paid order in that session.
+
+**Conceptual request:**
+
+```json
+{
+    "session_scan_table_id": 81,
+    "rating": 5,
+    "review": "Amazing food and service!",
+    "photos": ["<image file>"],
+    "items": [
+        {
+            "cart_item_id": 1,
+            "rating": 5,
+            "review": "Best pizza I've ever had",
+            "photos": ["<image file>"]
+        }
+    ]
+}
+```
+
+For multipart clients, send nested fields such as `photos[]`, `items[0][cart_item_id]`, `items[0][rating]`, `items[0][review]`, and `items[0][photos][]`.
+
 **Validation:**
 
-- `order_id`: required, the order's `order_public_id`
-- `rating`: required, integer, 1–5 (overall order rating)
-- `review`: nullable, string, max 2000 (overall order review text)
+- `session_scan_table_id`: required, integer, must identify the authenticated customer's session
+- `rating`: required, integer, 1–5 (overall session rating)
+- `review`: nullable, string, max 2000
+- `photos`: nullable, maximum 5 JPG, JPEG, PNG, or WebP files; maximum 5 MB each
 - `items`: required, array, min 1 item
-- `items.*.cart_item_id`: required, integer, must belong to the order
+- `items.*.cart_item_id`: required, distinct integer, must belong to an order in the session
 - `items.*.rating`: required, integer, 1–5
 - `items.*.review`: nullable, string, max 1000
+- `items.*.photos`: nullable, maximum 5 JPG, JPEG, PNG, or WebP files per item; maximum 5 MB each
 
 **Eligibility:**
 
-- The order must belong to the authenticated customer
-- The order must be paid (`payment_received = true`)
-- All cart items in the order must be served (`served_at` is set)
-- One review per order
+- The same session-wide checks described in §8.2 are performed again when the review is submitted.
+- Only one review can be created per table scan session.
 
 **Side effects:**
 
@@ -3694,9 +3752,12 @@ Reviews are per-order. The customer rates each item individually and provides an
     "message": "Review submitted.",
     "review": {
         "review_public_id": "rev_abc123...",
-        "order_id": "ord-aB3xK9pQrS12",
+        "session_scan_table_id": 81,
         "rating": 5,
         "text": "Amazing food and service!",
+        "photos": [
+            "http://localhost:8000/media/reviews/rev_abc123/photos/table.jpg"
+        ],
         "items": [
             {
                 "cart_item_id": 1,
@@ -3704,7 +3765,10 @@ Reviews are per-order. The customer rates each item individually and provides an
                 "menu_item_name": "Margherita Pizza",
                 "menu_item_image": "http://localhost:8000/media/menu-items/42/photo.jpg",
                 "rating": 5,
-                "text": "Best pizza I've ever had"
+                "text": "Best pizza I've ever had",
+                "photos": [
+                    "http://localhost:8000/media/reviews/rev_abc123/items/1/pizza.jpg"
+                ]
             }
         ]
     }
@@ -3713,7 +3777,7 @@ Reviews are per-order. The customer rates each item individually and provides an
 
 ---
 
-### 8.3 Update Review
+### 8.4 Update Review
 
 **PATCH** `/api/customer/reviews/{reviewPublicId}`
 
@@ -3735,15 +3799,15 @@ Can update the overall rating/text and optionally update per-item ratings.
 }
 ```
 
-All fields are optional. If `items` is provided, each item is upserted (created or updated) by `cart_item_id`. Menu item ratings are recalculated.
+All fields are optional. If `items` is provided, each item must belong to an order in the review's session and is upserted by `cart_item_id`. Menu item ratings are recalculated.
 
 ---
 
-### 8.4 Delete Review
+### 8.5 Delete Review
 
 **DELETE** `/api/customer/reviews/{reviewPublicId}`
 
-Deletes the review and all associated item reviews. Menu item ratings are recalculated.
+Deletes the review, uploaded review photos, associated item reviews, and item photos. Menu item ratings are recalculated.
 
 ---
 
