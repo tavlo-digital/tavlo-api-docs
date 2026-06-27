@@ -838,7 +838,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 [
     {
         "id": 1,
-        "name": "Starters",
+        "name": "Vorspeisen",
         "slug": "starters",
         "icon": "http://localhost:8000/media/categories/starters.png",
         "sort_order": 1
@@ -850,6 +850,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 **Notes:**
 
 - `icon` is the absolute URL of the category icon image, or `null` if no icon is set.
+- `name` uses a vendor-specific category translation when available, then the master category translation, and finally the English/base name.
 - The response includes `Content-Language` with the resolved locale.
 - The response includes `Vary: Accept-Language` for language-aware caching.
 
@@ -1655,13 +1656,15 @@ Sends a notification to all active waiters at the restaurant that owns the suppl
 
 ```json
 {
-  "table_id": 42
+  "table_id": 42,
+  "note": "Please bring the bill."
 }
 ```
 
 **Rules:**
 
 - `table_id` must be the ID of an existing restaurant table.
+- `note` is optional, must be a string when provided, and may contain up to 500 characters. It is included in the waiter notification.
 - The table determines which restaurant's waiters are notified; no table scan session is required.
 - Only team members with role `waiter` and status `active` are notified.
 - If no active waiters exist at the restaurant → blocked.
@@ -3643,7 +3646,64 @@ Review `created_at`, `updated_at`, and `vendor_replied_at` fields use each revie
 
 ---
 
-### 8.2 Get Reviewable Session Orders
+### 8.2 List Reviews for a Menu Item
+
+**GET** `/api/customer/reviews/item/{menuItemId}`
+
+**Authentication:** required (`auth:customer`).
+
+Returns only the item-level review entries for the requested menu item. The parent session's overall rating, text, photos, and reviews for other items are not returned. Flagged session reviews are excluded.
+
+**Query Parameters:** `per_page` (default `20`, maximum `100`), `page`
+
+**Request body:** none.
+
+**Response (200):**
+
+```json
+{
+    "data": [
+        {
+            "review_public_id": "rev_abc123",
+            "session_scan_table_id": 81,
+            "cart_item_id": 301,
+            "rating": 5,
+            "text": "Best pizza I've ever had",
+            "photos": [
+                "http://localhost:8000/media/reviews/rev_abc123/items/301/pizza.jpg"
+            ],
+            "reviewer": {
+                "name": "Jane Customer",
+                "profile_picture": null
+            },
+            "created_at": "06/21/2026 2:30 PM",
+            "updated_at": "06/21/2026 2:30 PM"
+        }
+    ],
+    "menu_item": {
+        "id": 42,
+        "name": "Margherita Pizza",
+        "image_url": "http://localhost:8000/media/menu-items/42/photo.jpg"
+    },
+    "review_summary": {
+        "average_rating": 5,
+        "total_reviews": 1,
+        "rating_breakdown": [
+            { "star": 5, "count": 1, "percent": 100 },
+            { "star": 4, "count": 0, "percent": 0 },
+            { "star": 3, "count": 0, "percent": 0 },
+            { "star": 2, "count": 0, "percent": 0 },
+            { "star": 1, "count": 0, "percent": 0 }
+        ]
+    }
+}
+```
+
+**Response (404):** The menu item does not exist, is inactive, or belongs to a restaurant that is not live and discoverable.
+
+---
+
+### 8.3 Get Reviewable Session Orders
 
 **GET** `/api/customer/reviews/session/{sessionScanTableId}`
 
@@ -3693,7 +3753,7 @@ The response uses `errors.session_scan_table_id` with one of these messages:
 
 ---
 
-### 8.3 Create Review
+### 8.4 Create Review
 
 **POST** `/api/customer/reviews`
 
@@ -3777,7 +3837,7 @@ For multipart clients, send nested fields such as `photos[]`, `items[0][cart_ite
 
 ---
 
-### 8.4 Update Review
+### 8.5 Update Review
 
 **PATCH** `/api/customer/reviews/{reviewPublicId}`
 
@@ -3803,7 +3863,7 @@ All fields are optional. If `items` is provided, each item must belong to an ord
 
 ---
 
-### 8.5 Delete Review
+### 8.6 Delete Review
 
 **DELETE** `/api/customer/reviews/{reviewPublicId}`
 
