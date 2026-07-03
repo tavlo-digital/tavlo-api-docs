@@ -248,10 +248,16 @@ Item status is computed from `cart_items` timestamps:
 
 | API `status` | Timestamp effect | Returned item `status` |
 |---|---|---|
-| `new` | clears `preparing_start_at`, `ready_at`, `served_at` | `new` |
+| `new` | no-op while the item is still `new` or `received`; never clears progress | `new` or `received` |
 | `preparing` | sets `preparing_start_at` | `in_progress` |
 | `ready` | sets `preparing_start_at` and `ready_at` | `ready` |
 | `served` | sets `preparing_start_at`, `ready_at`, and `served_at` | `served` |
+
+Status changes are forward-only: `new/received → preparing → ready → served`.
+Direct forward jumps are allowed. Repeating the current status is an idempotent
+`200` response and does not create duplicate notifications. A request that would
+move an item backward is rejected with `409 Conflict` and does not alter any
+timestamps.
 
 ### Request Body
 ```json
@@ -268,7 +274,17 @@ Returns the updated [Order Object](#order-object).
 ### Error Responses
 - `403` — staff role is not allowed to set the requested state
 - `404` — cart item is not linked to this order
+- `409` — the item has already advanced beyond the requested state
 - `422` — invalid status
+
+### Response `409`
+```json
+{
+  "message": "Item status has already advanced.",
+  "current_status": "ready",
+  "requested_status": "new"
+}
+```
 
 ---
 

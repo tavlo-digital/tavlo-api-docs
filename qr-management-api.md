@@ -276,7 +276,7 @@ Closes all active `table_scan_sessions` for one restaurant table. This is the wa
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `force` | boolean | ❌ | Required only after a `409` unpaid-balance warning if the waiter confirms closing anyway |
+| `force` | boolean | ❌ | Overrides an unpaid-balance warning only. It never overrides unfinished order items. |
 
 **Response `200`:**
 ```json
@@ -307,6 +307,7 @@ Closes all active `table_scan_sessions` for one restaurant table. This is the wa
 ```json
 {
   "message": "This table still has unpaid balances.",
+  "code": "unpaid_balance",
   "paymentSummary": {
     "totalAmount": 46,
     "paidAmount": 20,
@@ -319,9 +320,34 @@ Closes all active `table_scan_sessions` for one restaurant table. This is the wa
 
 After showing the warning to the waiter, call the same endpoint with `{ "force": true }` to close anyway.
 
+**Response `409` unfinished items:**
+```json
+{
+  "message": "This table still has unfinished order items.",
+  "code": "unfinished_items",
+  "fulfillmentSummary": {
+    "unfinishedOrdersCount": 1,
+    "unservedItemsCount": 2
+  },
+  "paymentSummary": {
+    "totalAmount": 46,
+    "paidAmount": 46,
+    "remainingAmount": 0,
+    "cashPendingOrders": 0,
+    "ordersCount": 1
+  }
+}
+```
+
+Every cart item linked directly through `order_id` or through `shared_order_ids`
+must be served before the table can close. Draft and cancelled orders do not
+block closure. This conflict cannot be overridden with `force`; staff must serve
+the remaining items or explicitly cancel the affected order first.
+
 **Error Responses:**
 - `403` — authenticated staff role cannot close tables, or vendor/table mismatch
 - `404` — table has no active scan session
+- `409` — unpaid balance requiring confirmation, or unfinished order items that must be resolved
 - `422` — invalid `force` value
 
 ---
