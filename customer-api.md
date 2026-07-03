@@ -2452,6 +2452,17 @@ For a given order `O` in `people[].orders[]`, an item appears in its `items[]` i
 
 Returns the authenticated customer's account-level order history grouped by restaurant. Unlike [§4.1](#41-get-current-table-history), this endpoint is not scoped to the currently active table session; it is for the customer's full past order history.
 
+Every customer order object returned by table history, account history, restaurant-specific history, order detail, tracking, and receipts includes the payer identity below. It is `null` unless another customer claimed the order:
+
+```json
+{
+    "paid_by": {
+        "id": 7,
+        "name": "Ali Khan"
+    }
+}
+```
+
 **Authentication:** required (Bearer token).
 
 **Query Parameters:**
@@ -2949,11 +2960,91 @@ Returns the customer-facing payment methods currently available for a restaurant
 
 ---
 
+### 4.4.1 Assign a Tablemate's Orders for Payment
+
+**POST** `/api/customer/payments/pay-for`
+
+Assigns all eligible orders belonging to another customer at the authenticated customer's current table to the authenticated customer for payment.
+
+**Authentication:** required (Bearer token).
+
+**Body:**
+
+```json
+{
+    "customer_id": 8
+}
+```
+
+`customer_id` is the numeric ID of another customer with an active session at the same restaurant table. Eligible orders are confirmed or later, unpaid, not payment-pending, and not cancelled. Draft orders and orders created after this request are not assigned. Repeating the same request is idempotent.
+
+On success, every customer with an active session at the table receives a `payment_updated` notification identifying the payer and the customer whose orders were assigned.
+
+**Response (200):**
+
+```json
+{
+    "message": "Orders assigned for payment.",
+    "paid_by": {
+        "id": 7,
+        "name": "Ali Khan"
+    },
+    "orders_count": 2,
+    "orders": [
+        {
+            "id": 42,
+            "order_public_id": "ord-aB3xK9pQrS12"
+        }
+    ]
+}
+```
+
+**Response (409):**
+
+```json
+{ "message": "One or more orders are already assigned to another payer." }
+```
+
+**Response (422):** returned for self-selection, no active table session, a customer outside the current table, or no eligible unpaid orders.
+
+---
+
+### 4.4.2 Release a Tablemate's Payment Assignment
+
+**DELETE** `/api/customer/payments/pay-for/{customerId}`
+
+Releases the authenticated customer's unpaid assignments for the selected tablemate. Successfully paid orders retain their payer identity for history and receipts. The operation is idempotent when no releasable orders remain.
+
+When at least one assignment is released, every customer with an active session at the table receives a `payment_updated` notification.
+
+**Authentication:** required (Bearer token).
+
+**Request body:** none.
+
+**Response (200):**
+
+```json
+{
+    "message": "Payment assignment released.",
+    "released_orders_count": 2
+}
+```
+
+**Response (409):**
+
+```json
+{ "message": "Orders with an active payment cannot be released." }
+```
+
+**Response (422):** returned when the authenticated customer has no active table session or the selected customer is not active at the same table.
+
+---
+
 ### 4.5 Create Stripe Payment Intent
 
 **POST** `/api/customer/payments/create-intent`
 
-Creates a Stripe PaymentIntent for the authenticated customer's order. This endpoint is for Stripe Elements / PaymentElement; the frontend stays in the app and uses the returned `clientSecret`.
+Creates one Stripe PaymentIntent for the requested order plus every eligible order at the same active table whose `paid_by` is the authenticated customer. The requested order may be owned by the authenticated customer or assigned to them. This endpoint is for Stripe Elements / PaymentElement; the frontend stays in the app and uses the returned `clientSecret`.
 
 **Authentication:** required (Bearer token).
 
@@ -2972,12 +3063,15 @@ Creates a Stripe PaymentIntent for the authenticated customer's order. This endp
 
 - Resolves `order_id` by `orders.order_public_id` first, then numeric `orders.id`.
 - Validates that `customer_id` matches the authenticated customer.
-- Validates that the order belongs to the authenticated customer.
+- Validates that the order belongs to or is assigned to the authenticated customer.
+- Rejects an owner attempting to pay an order assigned to someone else with HTTP `409`.
+- Includes all confirmed-or-later, unpaid orders assigned to the payer in the same active table visit.
 - Derives `table_session_id` from `orders.table_scan_session_id`; the frontend does not send it.
-- Recalculates the final payable amount from cart rows already bound to the table order through `cart_items.order_id` plus shared rows in `shared_order_ids`, then updates `orders.amount`.
+- Recalculates each covered order from bound and shared cart rows and charges their combined total.
 - Requires the restaurant's `vendor_settings` to have Stripe enabled, a `stripe_account_id`, and completed onboarding.
 - Creates a platform PaymentIntent with `transfer_data.destination` set to the vendor Stripe account ID.
-- Stores an `order_payments` row for audit and webhook reconciliation.
+- Stores one `order_payments` row and links every covered order through `order_payment_orders` for audit and webhook reconciliation.
+- Returns the existing active PaymentIntent when the request is retried.
 
 **PaymentIntent metadata:**
 
@@ -2988,7 +3082,8 @@ Creates a Stripe PaymentIntent for the authenticated customer's order. This endp
     "vendor_id": "1",
     "customer_id": "7",
     "table_session_id": "12",
-    "payment_for": "dine_in"
+    "payment_for": "dine_in",
+    "covered_order_count": "3"
 }
 ```
 
@@ -3019,7 +3114,7 @@ Creates a Stripe PaymentIntent for the authenticated customer's order. This endp
 
 **POST** `/api/customer/payments/update-intent`
 
-Updates an existing Stripe PaymentIntent after the customer chooses a tip. The backend stores the tip on the order and updates the Stripe payable amount to `order amount + tip`.
+Updates an existing Stripe PaymentIntent after the customer chooses a tip. For a grouped payment, the backend recalculates every linked order and stores the full tip on the payer-owned anchor order. A positive tip is rejected when the payment contains only other customers' orders.
 
 **Authentication:** required (Bearer token).
 
@@ -3040,9 +3135,9 @@ Updates an existing Stripe PaymentIntent after the customer chooses a tip. The b
 
 - Resolves the order and validates that it belongs to the authenticated customer.
 - Validates that the PaymentIntent belongs to the same order/customer through `order_payments`.
-- Stores `tip_amount` in `orders.tip_amount`.
+- Stores `tip_amount` on the payer-owned anchor order.
 - Keeps `orders.amount` as the order subtotal/payable amount before tip.
-- Updates the Stripe PaymentIntent amount to `orders.amount + orders.tip_amount`.
+- Updates the Stripe PaymentIntent amount to the sum of all covered orders plus the tip.
 - Updates `order_payments.amount` to the final charged amount including tip.
 
 **Response (200):**
@@ -3072,7 +3167,7 @@ Updates an existing Stripe PaymentIntent after the customer chooses a tip. The b
 
 **GET** `/api/customer/payments/verify?payment_intent=pi_123`
 
-Retrieves the PaymentIntent from Stripe, verifies it matches the authenticated customer's internal payment row, syncs the order payment fields, and returns the frontend-safe payment state.
+Retrieves the PaymentIntent from Stripe, verifies it matches the authenticated customer's internal payment row, synchronizes every covered order, and returns the frontend-safe payment state.
 
 **Authentication:** required (Bearer token).
 
@@ -3111,7 +3206,7 @@ Retrieves the PaymentIntent from Stripe, verifies it matches the authenticated c
 
 **POST** `/api/customer/payments/webhook`
 
-Receives Stripe PaymentIntent events and keeps `order_payments` and `orders` in sync.
+Receives Stripe PaymentIntent events and keeps `order_payments` and every order linked through `order_payment_orders` in sync.
 
 **Authentication:** public route; Stripe signature required via `Stripe-Signature` header and `STRIPE_WEBHOOK_SECRET`.
 
@@ -3142,6 +3237,7 @@ Receives Stripe PaymentIntent events and keeps `order_payments` and `orders` in 
 
 - `orders` stores current customer-facing payment flags and Stripe transaction ID.
 - `order_payments` stores PaymentIntent audit/reconciliation data.
+- `order_payment_orders` stores every order and pre-tip amount covered by a PaymentIntent.
 - `stripe_webhook_logs` stores every webhook delivery attempt and its outcome.
 - `table_scan_sessions` links dine-in orders to the customer session.
 - `cart_items.order_id` links owned item rows to the order; `cart_items.shared_order_ids` links shared item rows to participant orders.
@@ -3349,7 +3445,7 @@ Returns the authenticated customer's most recent notifications (up to 50) and an
 | `cart_updated` | Cart item added, updated, or removed by any customer at the table |
 | `cart_item_updated` | Individual cart item status changed by vendor (preparing, ready, served) |
 | `order_updated` | Order created, confirmed, ready, served, picked up, or cancelled |
-| `payment_updated` | Payment initiated, completed, or cash payment confirmed |
+| `payment_updated` | Payment assignment claimed/released, payment initiated/completed, or cash payment confirmed |
 | `participant_added` | New customer joined the table session |
 | `session_expire` | Table session closed |
 
