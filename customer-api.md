@@ -3860,7 +3860,90 @@ Returns only the item-level review entries for the requested menu item. The pare
 
 ---
 
-### 8.3 Get Reviewable Session Orders
+### 8.3 List All Sessions & Review Status
+
+**GET** `/api/customer/reviews/sessions`
+
+**Authentication:** required (`auth:customer`).
+
+**Request body:** none.
+
+Returns all table scan sessions for the authenticated customer that have at least one order, along with review eligibility flags and full review details when a review exists. Sessions with no orders are excluded.
+
+**Response (200):**
+
+```json
+{
+    "data": [
+        {
+            "session_scan_table_id": 81,
+            "reviewed": true,
+            "reviewable": false,
+            "all_paid": true,
+            "all_served": true,
+            "orders": [
+                {
+                    "order_id": "ord-aB3xK9pQrS12",
+                    "total_amount_paid": 27.5,
+                    "items": [
+                        { "cart_item_id": 1 },
+                        { "cart_item_id": 2 }
+                    ]
+                }
+            ],
+            "review": {
+                "review_public_id": "rev-xYz123",
+                "session_scan_table_id": 81,
+                "rating": 5,
+                "text": "Amazing food and service!",
+                "photos": ["https://.../photo1.jpg"],
+                "vendor": {
+                    "vendor_public_id": "vnd-aBcDeF",
+                    "restaurant_name": "Tavlo Kitchen"
+                },
+                "items": [
+                    {
+                        "cart_item_id": 1,
+                        "menu_item_id": 10,
+                        "menu_item_name": "Margherita Pizza",
+                        "menu_item_image": "https://.../pizza.jpg",
+                        "rating": 5,
+                        "text": "Best pizza I've ever had",
+                        "photos": ["https://.../item_photo.jpg"]
+                    }
+                ],
+                "vendor_reply": null,
+                "vendor_replied_at": null,
+                "flagged": false,
+                "created_at": "2026-07-04 19:30:00",
+                "updated_at": "2026-07-04 19:30:00"
+            }
+        },
+        {
+            "session_scan_table_id": 72,
+            "reviewed": false,
+            "reviewable": true,
+            "all_paid": true,
+            "all_served": true,
+            "orders": [
+                {
+                    "order_id": "ord-kL9mN2pQrT45",
+                    "total_amount_paid": 15.0,
+                    "items": [
+                        { "cart_item_id": 5 }
+                    ]
+                }
+            ]
+        }
+    ]
+}
+```
+
+The `review` object is only present when `reviewed` is `true`.
+
+---
+
+### 8.4 Get Session Orders & Review Status
 
 **GET** `/api/customer/reviews/session/{sessionScanTableId}`
 
@@ -3868,21 +3951,26 @@ Returns only the item-level review entries for the requested menu item. The pare
 
 **Request body:** none.
 
-Checks whether the authenticated customer can review the table scan session and returns every order and cart item that can be included in the session review.
+Returns every order and cart item for the table scan session, along with review eligibility flags. If a review has already been submitted, the full review details are included so the client can prefill an edit form.
 
-**Eligibility:**
+**Status flags:**
 
-- The session must belong to the authenticated customer.
-- The session must not have been reviewed before.
-- The session must contain at least one order and at least one cart item.
-- Every order in the session must be paid (`payment_received = true`).
-- Every cart item in those orders, including shared items charged to the order, must be served (`served_at` is set).
+| Field | Type | Description |
+|-------|------|-------------|
+| `reviewed` | boolean | `true` if a review has already been submitted for this session. |
+| `reviewable` | boolean | `true` only when all orders are paid, all items are served, **and** no review exists yet. `false` if a review already exists. |
+| `all_paid` | boolean | `true` if every order in the session has `payment_received = true`. |
+| `all_served` | boolean | `true` if every cart item (including shared items) has `served_at` set. |
 
-**Response (200):**
+**Response (200) — no existing review:**
 
 ```json
 {
     "session_scan_table_id": 81,
+    "reviewed": false,
+    "reviewable": true,
+    "all_paid": true,
+    "all_served": true,
     "orders": [
         {
             "order_id": "ord-aB3xK9pQrS12",
@@ -3896,6 +3984,55 @@ Checks whether the authenticated customer can review the table scan session and 
 }
 ```
 
+**Response (200) — review already submitted:**
+
+```json
+{
+    "session_scan_table_id": 81,
+    "reviewed": true,
+    "reviewable": false,
+    "all_paid": true,
+    "all_served": true,
+    "orders": [
+        {
+            "order_id": "ord-aB3xK9pQrS12",
+            "total_amount_paid": 27.5,
+            "items": [
+                { "cart_item_id": 1 },
+                { "cart_item_id": 2 }
+            ]
+        }
+    ],
+    "review": {
+        "review_public_id": "rev-xYz123",
+        "session_scan_table_id": 81,
+        "rating": 5,
+        "text": "Amazing food and service!",
+        "photos": ["https://.../photo1.jpg"],
+        "vendor": {
+            "vendor_public_id": "vnd-aBcDeF",
+            "restaurant_name": "Tavlo Kitchen"
+        },
+        "items": [
+            {
+                "cart_item_id": 1,
+                "menu_item_id": 10,
+                "menu_item_name": "Margherita Pizza",
+                "menu_item_image": "https://.../pizza.jpg",
+                "rating": 5,
+                "text": "Best pizza I've ever had",
+                "photos": ["https://.../item_photo.jpg"]
+            }
+        ],
+        "vendor_reply": null,
+        "vendor_replied_at": null,
+        "flagged": false,
+        "created_at": "2026-07-04 19:30:00",
+        "updated_at": "2026-07-04 19:30:00"
+    }
+}
+```
+
 `total_amount_paid` includes the order amount and its tip.
 
 **Response (422):**
@@ -3903,14 +4040,10 @@ Checks whether the authenticated customer can review the table scan session and 
 The response uses `errors.session_scan_table_id` with one of these messages:
 
 - `This session has no orders.`
-- `This session has no order items.`
-- `All orders must be paid before you can review this session.`
-- `Items are not served yet.`
-- `You have already reviewed this session.`
 
 ---
 
-### 8.4 Create Review
+### 8.5 Create Review
 
 **POST** `/api/customer/reviews`
 
@@ -3994,7 +4127,7 @@ For multipart clients, send nested fields such as `photos[]`, `items[0][cart_ite
 
 ---
 
-### 8.5 Update Review
+### 8.6 Update Review
 
 **PATCH** `/api/customer/reviews/{reviewPublicId}`
 
@@ -4020,7 +4153,7 @@ All fields are optional. If `items` is provided, each item must belong to an ord
 
 ---
 
-### 8.6 Delete Review
+### 8.7 Delete Review
 
 **DELETE** `/api/customer/reviews/{reviewPublicId}`
 
