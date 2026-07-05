@@ -3040,7 +3040,68 @@ When at least one assignment is released, every customer with an active session 
 
 ---
 
-### 4.5 Create Stripe Payment Intent
+### 4.5 Request Cash Payment
+
+**POST** `/api/customer/payments/request-cash`
+
+Requests a cash payment for the specified order plus every eligible order at the same active table whose `paid_by` is the authenticated customer. Creates an `order_payments` record with status `cash_requested` and notifies all customers at the table plus the waiter staff. The waiter manually confirms cash receipt via `PATCH /api/vendor/orders/{orderId}/confirm-cash`.
+
+**Authentication:** required (Bearer token).
+
+**Body:**
+
+```json
+{
+    "order_id": "ord-aB3xK9pQrS12",
+    "customer_id": 7,
+    "notes": "I have a 50€ note, will need change"
+}
+```
+
+| Field         | Type            | Required | Description                                                  |
+|---------------|-----------------|----------|--------------------------------------------------------------|
+| `order_id`    | string \| int   | Yes      | Numeric `orders.id` or `orders.order_public_id`.             |
+| `customer_id` | integer         | Yes      | Must match the authenticated customer's ID.                  |
+| `notes`       | string \| null  | No       | Free-text note shown to the waiter (max 500 chars).          |
+
+**Backend behavior:**
+
+- Resolves `order_id` by `orders.order_public_id` first, then numeric `orders.id`.
+- Validates that `customer_id` matches the authenticated customer.
+- Validates that the order belongs to or is assigned to the authenticated customer.
+- Rejects an owner attempting to pay an order assigned to someone else with HTTP `409`.
+- Includes all confirmed-or-later, unpaid orders assigned to the payer in the same active table visit.
+- Rejects if any session has unsubmitted cart items (HTTP `422`).
+- Rejects if total amount is zero or negative (HTTP `422`).
+- Creates one `order_payments` row with `status: 'cash_requested'`, `payment_method: 'cash'`, and `notes` in metadata.
+- Updates each covered order: `payment_method = 'cash'`, `payment_pending = true`.
+- Sends a `payment_updated` notification to all customers at the table and to waiter/vendor staff.
+
+**Response (200):**
+
+```json
+{
+    "message": "Cash payment requested. A waiter will come to your table.",
+    "amount": 42.50,
+    "currency": "EUR"
+}
+```
+
+**Response (409) — assigned to another payer or already paid:**
+
+```json
+{ "message": "This order is assigned to another payer." }
+```
+
+**Response (422) — already paid, unsubmitted items, or zero amount:**
+
+```json
+{ "message": "Order is already paid." }
+```
+
+---
+
+### 4.6 Create Stripe Payment Intent
 
 **POST** `/api/customer/payments/create-intent`
 
@@ -3110,7 +3171,7 @@ Creates one Stripe PaymentIntent for the requested order plus every eligible ord
 
 ---
 
-### 4.6 Update Stripe Payment Intent With Tip
+### 4.7 Update Stripe Payment Intent With Tip
 
 **POST** `/api/customer/payments/update-intent`
 
@@ -3163,7 +3224,7 @@ Updates an existing Stripe PaymentIntent after the customer chooses a tip. For a
 
 ---
 
-### 4.7 Verify Stripe Payment Intent
+### 4.8 Verify Stripe Payment Intent
 
 **GET** `/api/customer/payments/verify?payment_intent=pi_123`
 
@@ -3202,7 +3263,7 @@ Retrieves the PaymentIntent from Stripe, verifies it matches the authenticated c
 
 ---
 
-### 4.8 Stripe Payment Webhook
+### 4.9 Stripe Payment Webhook
 
 **POST** `/api/customer/payments/webhook`
 
@@ -3245,7 +3306,7 @@ Receives Stripe PaymentIntent events and keeps `order_payments` and every order 
 
 ---
 
-### 4.9 Track Participant Order 🔒
+### 4.10 Track Participant Order 🔒
 
 **GET** `/api/customer/orders/{orderPublicId}/tracking`
 
@@ -3404,7 +3465,7 @@ Returns the authenticated participant's order tracking payload. This endpoint is
 
 ---
 
-### 4.10 Notifications 🔒
+### 4.11 Notifications 🔒
 
 #### 4.10.1 List Notifications
 
