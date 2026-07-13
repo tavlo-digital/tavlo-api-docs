@@ -320,6 +320,8 @@ Closes all active `table_scan_sessions` for one restaurant table. This is the wa
 
 After showing the warning to the waiter, call the same endpoint with `{ "force": true }` to close anyway.
 
+**Notifications on success:** every customer with an active session at the table receives a `session_expire` notification (template `session.closed`, message "Your table session has been closed."), and a visible `table_session_changed` notification is created for the vendor, all active waiters, and all active kitchen staff. No notifications are created on `404`/`409` responses.
+
 **Response `409` unfinished items:**
 ```json
 {
@@ -352,7 +354,66 @@ the remaining items or explicitly cancel the affected order first.
 
 ---
 
-## 8. Table Status Logic
+## 8. Transfer Active Table Sessions
+
+### POST `/api/vendor/{vendorId}/tables/{tableId}/transfer`
+
+Moves every active scan session on the source table to one empty, active target
+table. Existing session IDs remain unchanged, so customer carts, payments,
+reviews, and authenticated table sessions continue without requiring another QR
+scan. Linked dine-in orders have their denormalized `table_number` updated to the
+target table number.
+
+The target must not have any active `table_scan_sessions`. Transfers never merge
+two occupied tables.
+
+**Auth:** Vendor owner/manager or active `waiter` staff token. Other staff roles receive `403`.
+
+**Request:**
+```json
+{
+  "target_table_id": 12
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `target_table_id` | integer | ✅ | Database ID of a different, active, empty table belonging to the same vendor |
+
+**Response `200`:**
+```json
+{
+  "message": "Transferred to Table 12.",
+  "source_table_id": "7",
+  "target_table_id": "12",
+  "session_ids": ["31", "32"],
+  "sessions_transferred": 2,
+  "orders_updated": 3
+}
+```
+
+The source table's waiter-call alert is cleared and follows the session to the
+target table. Customer and operational realtime notifications are emitted so
+connected screens can reload the new table assignment.
+
+**Response `409` occupied target:**
+```json
+{
+  "message": "Table 12 is occupied. Select an empty table.",
+  "code": "target_table_occupied",
+  "target_table_id": "12"
+}
+```
+
+**Error Responses:**
+- `403` — authenticated actor belongs to another vendor or is not an owner/waiter
+- `404` — source/target table does not exist, or the source has no active session
+- `409` — target table is occupied or inactive
+- `422` — `target_table_id` is missing/invalid, or source and target are the same table
+
+---
+
+## 9. Table Status Logic
 
 Status is **computed dynamically** on every `GET /tables` request — it is never stored in the database.
 
@@ -369,7 +430,7 @@ The lookup is based on `table_scan_sessions.restaurant_table_id`, joined to `ord
 
 ---
 
-## 9. Error Reference
+## 10. Error Reference
 
 | HTTP Status | Meaning |
 |---|---|
@@ -378,7 +439,7 @@ The lookup is based on `table_scan_sessions.restaurant_table_id`, joined to `ord
 | `401` | Missing or invalid authentication token |
 | `403` | Token belongs to a different vendor |
 | `404` | Table or vendor not found |
-| `409` | Conflict — table has active orders and cannot be deleted, or close-session found unpaid balances |
+| `409` | Conflict — table has active orders, close-session found unpaid balances, or transfer target is occupied/inactive |
 | `410` | QR token is stale / no longer valid |
 | `422` | Validation failed (see `errors` in response body) |
 
@@ -400,3 +461,4 @@ The lookup is based on `table_scan_sessions.restaurant_table_id`, joined to `ord
 | `POST` | `/api/vendor/{vendorId}/takeaway/scan` | 🔓 Public | Record takeaway QR scan |
 | `POST` | `/api/vendor/{vendorId}/tables/sync` | ✅ | Sync table count to desired number |
 | `POST` | `/api/vendor/{vendorId}/tables/{tableId}/close-session` | ✅ Waiter/owner | Close active table scan sessions |
+| `POST` | `/api/vendor/{vendorId}/tables/{tableId}/transfer` | ✅ Waiter/owner | Move active sessions to an empty table |

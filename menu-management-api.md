@@ -292,7 +292,9 @@ Authorization: Bearer {token}
 
 ### GET `/api/vendor/menu/items`
 
-Returns all active menu items with stats. Supports filtering.
+Returns all active menu items with stats. Supports filtering. Accessible to vendor owners and **waiter** team members (used by the waiter ordering sheet).
+
+**Pricing fields:** `price`, `discountedPrice`, paid addon `price`, and modifier option `priceAdjustment` are **net** (the canonical values edited in menu management). Each also has a **gross (VAT-inclusive)** twin computed exactly like the customer menu API — `grossPrice`, `grossDiscountedPrice`, addon `grossPrice`, option `grossPriceAdjustment` (using the modifier group's `vatRate`) — so ordering UIs can show customer-identical prices. The top-level `serviceFeeRate` (percent, from vendor settings) lets clients preview the order total: `round(items_gross × serviceFeeRate/100, 2)` on top of the gross items total.
 
 **Request:**
 ```
@@ -316,6 +318,7 @@ Authorization: Bearer {token}
     "averagePrice": 11.87,
     "averageRating": 4.59
   },
+  "serviceFeeRate": 10.0,
   "data": [
     {
       "id": 40,
@@ -325,6 +328,7 @@ Authorization: Bearer {token}
       "name": "Bruschetta al Pomodoro",
       "description": "Toasted bread topped with fresh tomatoes, basil, garlic, and extra virgin olive oil.",
       "price": 8.9,
+      "grossPrice": 9.79,
       "imageUrl": null,
       "available": true,
       "isActive": true,
@@ -358,11 +362,12 @@ Authorization: Bearer {token}
           "minSelection": 1,
           "maxSelection": 1,
           "isRequired": true,
+          "vatRate": 10.0,
           "sortOrder": 0,
           "options": [
-            { "id": 1, "name": "Small", "priceAdjustment": 0.0, "sortOrder": 0, "isActive": true },
-            { "id": 2, "name": "Medium", "priceAdjustment": 2.0, "sortOrder": 1, "isActive": true },
-            { "id": 3, "name": "Large", "priceAdjustment": 4.0, "sortOrder": 2, "isActive": true }
+            { "id": 1, "name": "Small", "priceAdjustment": 0.0, "grossPriceAdjustment": 0.0, "sortOrder": 0, "isActive": true },
+            { "id": 2, "name": "Medium", "priceAdjustment": 2.0, "grossPriceAdjustment": 2.2, "sortOrder": 1, "isActive": true },
+            { "id": 3, "name": "Large", "priceAdjustment": 4.0, "grossPriceAdjustment": 4.4, "sortOrder": 2, "isActive": true }
           ]
         }
       ],

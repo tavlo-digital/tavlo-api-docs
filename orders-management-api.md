@@ -4,7 +4,7 @@
 **Authentication:** `Authorization: Bearer {token}` (vendor owner token or active team member token via Sanctum)  
 **Content-Type:** `application/json`
 
-Authenticated endpoints require a token obtained via `POST /api/vendor/login`. Vendor owners/managers can access all vendor routes. Staff tokens are restricted by role: kitchen staff can operate kitchen item states, and waiters can serve items, confirm cash, and close tables.
+Authenticated endpoints require a token obtained via `POST /api/vendor/login`. Vendor owners/managers can access all vendor routes. Staff tokens are restricted by role: kitchen staff can operate kitchen item states, and waiters can serve items, confirm cash, close tables, browse the menu (`GET /api/vendor/menu/items`), start table sessions, and place staff orders.
 
 ---
 
@@ -27,6 +27,8 @@ Authenticated endpoints require a token obtained via `POST /api/vendor/login`. V
 15. [Response Schemas](#15-response-schemas)
 16. [Realtime Notifications](#16-realtime-notifications)
 17. [Error Reference](#17-error-reference)
+18. [Start Table Session (Staff)](#18-start-table-session-staff)
+19. [Place Staff Order](#19-place-staff-order)
 
 ---
 
@@ -204,7 +206,7 @@ Confirms a pending order (typically for non-prepaid / walk-in orders). Sets `sta
 
 ### `PATCH /api/orders/{orderId}/confirm-cash`
 
-Records that cash payment has been received. Sets `paymentReceived → true`, `paymentPending → false`, and records `paymentConfirmedAt`.
+Records that cash payment has been received. Sets `paymentReceived → true`, `paymentPending → false`, and records `paymentConfirmedAt`. If the order has no `paymentMethod` yet (e.g. a staff order the customer never chose a payment method for), it is recorded as `cash`. Waiters can collect any unpaid order this way, even without a customer cash request.
 
 **Request Body:** none
 
@@ -621,7 +623,96 @@ After obtaining the token, call `supabase.realtime.setAuth(token)` and subscribe
 | `POST` | `/api/vendor/{vendorId}/sessions/{sessionId}/release` | [Legacy] Release batch to kitchen now |
 | `POST` | `/api/vendor/{vendorId}/sessions/{sessionId}/fire-course` | [Legacy] Advance to next course |
 | `POST` | `/api/vendor/{vendorId}/sessions/{sessionId}/close` | [Legacy] Close legacy table session |
+| `POST` | `/api/vendor/{vendorId}/tables/{tableId}/session` | Start a table session (staff) |
+| `POST` | `/api/vendor/{vendorId}/tables/{tableId}/staff-order` | Place a staff order for a table |
 | `GET` | `/api/vendor/realtime/token` | Get a short-lived Supabase Realtime JWT |
 | `GET` | `/api/vendor/notifications` | List actor-scoped notifications |
 | `PATCH` | `/api/vendor/notifications/{id}/read` | Mark one notification read |
 | `POST` | `/api/vendor/notifications/read-all` | Mark all actor notifications read |
+
+---
+
+## 18. Start Table Session (Staff)
+
+Creates an active `table_scan_session` for a table without a customer QR scan — exactly like a customer-created session, including the 4-digit PIN. The waiter can hand the PIN to guests, who join through the customer app (`POST /api/customer/table/pin`) and order normally.
+
+- **Method:** `POST`
+- **URL:** `/api/vendor/{vendorId}/tables/{tableId}/session`
+- **Auth:** Bearer token — vendor owner or **waiter** team member
+- **Body:** _none_
+
+Idempotent: if the table already has an active session, the existing session is returned with `created: false` instead of creating a duplicate.
+
+**Response `201 Created`** (new session) / **`200 OK`** (already active):
+
+```json
+{
+  "message": "Session started.",
+  "session_id": "42",
+  "pin": "4837",
+  "created": true
+}
+```
+
+**Errors:**
+
+| HTTP Code | Condition |
+|---|---|
+| `403` | Token belongs to a different vendor, or staff role is not `waiter` |
+| `404` | Table not found for this vendor |
+| `422` | Table is inactive (`code: "inactive_table"`) |
+
+---
+
+## 19. Place Staff Order
+
+Places a dine-in order on behalf of a table (waiter dashboard **+ ORDER**). Creates `cart_items` and an `orders` row identical to the customer flow: gross (VAT-inclusive) pricing via the tax service, plus the vendor's service fee — `service_fee = round(items_total × service_fee_rate / 100, 2)` and `amount = items_total + service_fee`. If the table has no active session, one is created automatically (with a PIN). The order is marked `placed_by: "waiter"`; when placed by a team member, `placed_by_team_member_id` records who.
+
+**Merging:** as long as the session has an unpaid, non-cancelled waiter order, subsequent staff orders append their items to it and reprice the whole order (items + service fee) — mirroring the customer flow's unpaid-order merge. The response returns the merged order's id. Once that order's payment is collected (`payment_received: true`), the next staff order starts a fresh order.
+
+- **Method:** `POST`
+- **URL:** `/api/vendor/{vendorId}/tables/{tableId}/staff-order`
+- **Auth:** Bearer token — vendor owner or **waiter** team member
+
+**Request body:**
+
+```json
+{
+  "items": [
+    {
+      "menu_item_id": 12,
+      "quantity": 2,
+      "notes": "No onions",
+      "paid_addons": [{ "id": 1, "name": "Extra cheese", "price": 1.5 }],
+      "free_addons": ["Ketchup"],
+      "removed_items": ["Pickles"],
+      "selected_modifiers": [
+        { "modifier_group_id": 3, "option_ids": [7] }
+      ]
+    }
+  ]
+}
+```
+
+Modifier selections are validated with the same rules as the customer cart: required groups must have a selection, `min_selection`/`max_selection` are enforced, and unknown groups or options are rejected with `422`.
+
+**Response `201 Created`:**
+
+```json
+{
+  "message": "Order placed successfully.",
+  "order_id": "ord-a1b2c3d4e5f6",
+  "amount": 26.35,
+  "session_id": 42
+}
+```
+
+The order then appears in `GET /api/vendor/{vendorId}/orders` with `"placedBy": "waiter"` (customer-placed orders have `"placedBy": "customer"`).
+
+**Errors:**
+
+| HTTP Code | Condition |
+|---|---|
+| `403` | Token belongs to a different vendor, or staff role is not `waiter` |
+| `404` | Table not found for this vendor |
+| `422` | Menu item unavailable/inactive, or modifier selection violates group rules |

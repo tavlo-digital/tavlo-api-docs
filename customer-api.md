@@ -1,3 +1,7 @@
+```
+
+```
+
 # Customer API Documentation
 
 ## Base URL
@@ -46,14 +50,14 @@ Order-level responses include a `tax_groups` array that groups all items by tax 
 
 ### `totals` Object
 
-| Field         | Type   | Description                                                                                                                                            |
-| ------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `net_total`   | float  | Sum of all `net_amount` across tax groups                                                                                                              |
-| `vat_total`   | float  | Sum of all `vat_amount` across tax groups                                                                                                              |
-| `service_fee` | float  | `gross_total × service_fee_rate%` (from vendor settings)                                                                                               |
-| `total_tips`  | float  | Sum of `tip_amount` from the order(s). In table history: sum across all orders for one person. In order detail/history/receipt: the single order's tip |
-| `grand_total` | float  | `gross_total + service_fee + total_tips`                                                                                                               |
-| `currency`    | string | Only present in order detail responses                                                                                                                 |
+| Field         | Type   | Description                                                                                                                                           |
+| ------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `net_total`   | float  | Sum of all`net_amount` across tax groups                                                                                                              |
+| `vat_total`   | float  | Sum of all`vat_amount` across tax groups                                                                                                              |
+| `service_fee` | float  | `gross_total × service_fee_rate%` (from vendor settings)                                                                                              |
+| `total_tips`  | float  | Sum of`tip_amount` from the order(s). In table history: sum across all orders for one person. In order detail/history/receipt: the single order's tip |
+| `grand_total` | float  | `gross_total + service_fee + total_tips`                                                                                                              |
+| `currency`    | string | Only present in order detail responses                                                                                                                |
 
 ### Currency Resolution
 
@@ -65,11 +69,11 @@ Order-level responses include a `tax_groups` array that groups all items by tax 
 
 Customer responses connected to a restaurant use that vendor's saved `dateFormat` and `timeFormat` from **Vendor Settings → Language → Local Formatting**.
 
-| Saved setting | Response example |
-| --- | --- |
-| `DD.MM.YYYY` + `24h` | `18.04.2026 14:32` |
+| Saved setting        | Response example     |
+| -------------------- | -------------------- |
+| `DD.MM.YYYY` + `24h` | `18.04.2026 14:32`   |
 | `MM/DD/YYYY` + `12h` | `04/18/2026 2:32 PM` |
-| `YYYY-MM-DD` + `24h` | `2026-04-18 14:32` |
+| `YYYY-MM-DD` + `24h` | `2026-04-18 14:32`   |
 
 This applies to restaurant opening hours, reviews, table sessions, table/order history, receipts, order tracking, reservations, customer reviews, notifications, and loyalty transactions. In responses containing data from several restaurants, each row uses its own vendor's settings.
 
@@ -93,9 +97,7 @@ Clients should prefer ID-based cart selections:
     "paid_addons": [{ "id": 5 }],
     "free_addons": [{ "id": 8 }],
     "removed_items": [{ "id": 11 }],
-    "selected_modifiers": [
-        { "modifier_group_id": 1, "option_ids": [2] }
-    ]
+    "selected_modifiers": [{ "modifier_group_id": 1, "option_ids": [2] }]
 }
 ```
 
@@ -314,9 +316,11 @@ Creates a new customer or links a social account to an existing email. The `acce
 **Behavior:**
 
 - If the social provider ID already exists → returns existing user with new token
-- If email exists but no social link → links social account to existing customer
-- If neither exists → creates new customer
+- If the provider returned an email and a customer with that email exists but has no social link → links social account to existing customer
+- If neither exists → creates new customer. `phone` and `email` are stored as `null` when not provided/returned by the provider (Apple omits the email after the first authorization). Email linking is skipped when the provider returns no email.
+- `email_verified_at` is set on creation only when the provider returned an email
 - Returns `422` with `access_token` error if the token is invalid or expired
+- Returns `422` with `email` error if a unique-constraint race occurs that cannot be resolved to an existing account
 
 ---
 
@@ -498,7 +502,7 @@ Use `multipart/form-data` when uploading a new profile image. Send the file usin
 | ----------------- | ------ | ---------------------------------------------------------------------------- |
 | `first_name`      | string | Optional                                                                     |
 | `last_name`       | string | Optional                                                                     |
-| `gender`          | string | Optional: `male`, `female`, `other`, `prefer_not_to_say`                     |
+| `gender`          | string | Optional:`male`, `female`, `other`, `prefer_not_to_say`                      |
 | `date_of_birth`   | date   | Optional, before today                                                       |
 | `address`         | string | Optional                                                                     |
 | `profile_picture` | file   | Optional image file. Backend stores it and returns the generated public URL. |
@@ -654,20 +658,21 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 **GET** `/api/customer/restaurants`
 
 **Query Parameters:**
-| Param | Type | Description |
-|-------|------|-------------|
-| `search` | string | Search by restaurant name or city |
-| `city` | string | Filter by city |
-| `cuisine` | int | Filter by menu category ID |
-| `price_range` | int | Price bracket: `1` = €0–10, `2` = €10–25, `3` = €25–50, `4` = €50+ |
-| `service_type` | string | `dine_in`, `takeaway`, or `reservation` |
-| `rating` | float | Minimum average rating (e.g. `4`) |
-| `distance` | float | Max distance in km (requires `latitude` and `longitude`) |
-| `latitude` | float | Customer's current latitude |
-| `longitude` | float | Customer's current longitude |
-| `sort_by` | string | `name` (default), `distance` (requires `latitude`/`longitude`), `rating` |
-| `per_page` | int | Items per page (default: 20) |
-| `page` | int | Page number |
+
+| Param          | Type   | Description                                                              |
+| -------------- | ------ | ------------------------------------------------------------------------ |
+| `search`       | string | Search by restaurant name or city                                        |
+| `city`         | string | Filter by city                                                           |
+| `cuisine`      | int    | Filter by menu category ID                                               |
+| `price_range`  | int    | Price bracket:`1` = €0–10, `2` = €10–25, `3` = €25–50, `4` = €50+        |
+| `service_type` | string | `dine_in`, `takeaway`, or `reservation`                                  |
+| `rating`       | float  | Minimum average rating (e.g.`4`)                                         |
+| `distance`     | float  | Max distance in km (requires`latitude` and `longitude`)                  |
+| `latitude`     | float  | Customer's current latitude                                              |
+| `longitude`    | float  | Customer's current longitude                                             |
+| `sort_by`      | string | `name` (default), `distance` (requires `latitude`/`longitude`), `rating` |
+| `per_page`     | int    | Items per page (default: 20)                                             |
+| `page`         | int    | Page number                                                              |
 
 **Response (200):**
 
@@ -769,9 +774,10 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 **GET** `/api/customer/restaurants/{vendorPublicId}`
 
 **Query Parameters (optional):**
-| Param | Type | Description |
-|-------|------|-------------|
-| `latitude` | float | Customer's current latitude (for distance) |
+
+| Param       | Type  | Description                                 |
+| ----------- | ----- | ------------------------------------------- |
+| `latitude`  | float | Customer's current latitude (for distance)  |
 | `longitude` | float | Customer's current longitude (for distance) |
 
 **Response (200):**
@@ -863,11 +869,12 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 **Request Header:** `Accept-Language: de`
 
 **Query Parameters:**
-| Param | Type | Description |
-|-------|------|-------------|
-| `category_id` | int | Filter by category (optional) |
-| `search` | string | Search by item name (optional) |
-| `lang` | string | Requested menu locale, for example `en` or `de` |
+
+| Param         | Type   | Description                                    |
+| ------------- | ------ | ---------------------------------------------- |
+| `category_id` | int    | Filter by category (optional)                  |
+| `search`      | string | Search by item name (optional)                 |
+| `lang`        | string | Requested menu locale, for example`en` or `de` |
 
 **Response (200):**
 
@@ -977,7 +984,9 @@ Returns all active menu categories across discoverable restaurants (deduplicated
     "carbs": 45.0,
     "protein": 38.0,
     "dietary_preference": "Vegetarian",
-    "paid_addons": [{ "id": 5, "name": "Extra cheese", "price": 1.65, "vat_rate": 10 }],
+    "paid_addons": [
+        { "id": 5, "name": "Extra cheese", "price": 1.65, "vat_rate": 10 }
+    ],
     "free_addons": ["Ketchup"],
     "free_addon_options": [{ "id": 8, "name": "Ketchup" }],
     "removable_items": ["Onions"],
@@ -1042,13 +1051,14 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 Returns all public (non-flagged) reviews for a restaurant, with reviewer info and the menu item being reviewed (if any).
 
 **Query Parameters:**
-| Param | Type | Description |
-|-------|------|-------------|
-| `rating` | int | Filter by star rating (1–5) |
-| `with_images` | bool | Only return reviews that include images |
-| `sort_by` | string | `recent` (default), `highest`, `lowest` |
-| `per_page` | int | Items per page (default: 20) |
-| `page` | int | Page number |
+
+| Param         | Type   | Description                             |
+| ------------- | ------ | --------------------------------------- |
+| `rating`      | int    | Filter by star rating (1–5)             |
+| `with_images` | bool   | Only return reviews that include images |
+| `sort_by`     | string | `recent` (default), `highest`, `lowest` |
+| `per_page`    | int    | Items per page (default: 20)            |
+| `page`        | int    | Page number                             |
 
 **Response (200):**
 
@@ -1656,8 +1666,8 @@ Sends a notification to all active waiters at the restaurant that owns the suppl
 
 ```json
 {
-  "table_id": 42,
-  "note": "Please bring the bill."
+    "table_id": 42,
+    "note": "Please bring the bill."
 }
 ```
 
@@ -1679,10 +1689,10 @@ Sends a notification to all active waiters at the restaurant that owns the suppl
 
 ```json
 {
-  "message": "The table id field is required.",
-  "errors": {
-    "table_id": ["The table id field is required."]
-  }
+    "message": "The table id field is required.",
+    "errors": {
+        "table_id": ["The table id field is required."]
+    }
 }
 ```
 
@@ -1873,7 +1883,9 @@ Adds an item to the authenticated customer's cart. If the same `menu_item_id` al
     "quantity": 2,
     "notes": "No salt",
     "price": 5.5,
-    "paid_addons": [{ "id": 5, "name": "Cheese sauce", "price": 1.65, "vat_rate": 10 }],
+    "paid_addons": [
+        { "id": 5, "name": "Cheese sauce", "price": 1.65, "vat_rate": 10 }
+    ],
     "free_addons": ["Ketchup"],
     "removed_items": ["Salt"],
     "selected_modifiers": [
@@ -2077,7 +2089,7 @@ Returns a payment-ready snapshot of the authenticated customer's current table:
 
 **POST** `/api/customer/table/order/draft`
 
-Creates a `draft` order for the authenticated customer's active table session. The amount is computed from the customer's currently open owned `cart_items` (`order_id = null`) plus any selected shared items. If the customer already has an unpaid draft for this active session, the draft amount is refreshed instead of creating another draft. If the latest unpaid order for this active session is already confirmed, this endpoint returns the table view without creating a new order; added open items are bound only when confirm is called again.
+Creates a `draft` order for the authenticated customer's active table session. The amount is computed from the customer's currently open owned `cart_items` (`order_id = null`) plus any selected shared items. If the customer already has an unpaid draft for this active session, the draft amount is refreshed instead of creating another draft. If the customer already has an unpaid, non-cancelled submitted order for this active session, this endpoint returns the table view without creating a new draft; added open items are bound to that existing order only when confirm is called again.
 
 **Authentication:** required (Bearer token).
 
@@ -2128,7 +2140,7 @@ Share or unshare a `cart_item` for the caller's draft order. At least one of `sh
 
 **Validation:**
 
-- `shared_item`: nullable integer. ID of a `cart_item` belonging to **another** customer at the same table. The caller's `order_id` is appended to that cart_item's `shared_order_ids` array (deduplicated).
+- `shared_item`: nullable integer. ID of a `cart_item` belonging to **another** customer at the same table. The caller's `order_id` is appended to that cart_item's `shared_order_ids` array. Returns `422` if the item is already shared with the caller's order, or if the item belongs to an order already assigned to the caller for payment.
 - `unshared_item`: nullable integer. ID of a `cart_item` at the same table. The caller's `order_id` is removed from that cart_item's `shared_order_ids` array. If the caller was not sharing this item, the operation is a silent no-op.
 - At least one of `shared_item` or `unshared_item` must be present.
 
@@ -2146,6 +2158,16 @@ Share or unshare a `cart_item` for the caller's draft order. At least one of `sh
 
 ```json
 { "message": "Provide shared_item or unshared_item." }
+```
+
+**Response (422) — invalid shared item:**
+
+```json
+{ "message": "This item is already shared with your order." }
+```
+
+```json
+{ "message": "You are already paying for this item." }
 ```
 
 **Response (422) — shared cart item not at this table:**
@@ -2184,7 +2206,11 @@ Share or unshare a `cart_item` for the caller's draft order. At least one of `sh
 
 **POST** `/api/customer/table/order/confirmed`
 
-Confirms the authenticated customer's open order for the active table session. **No request body is accepted.** The endpoint recomputes the final `amount`, updates the order to `status = "confirmed"`, and binds currently open owned cart rows to that order by setting `cart_items.order_id`.
+Confirms the authenticated customer's open order for the active table session. **No request body is accepted.** The endpoint recomputes the final `amount`, updates a draft order to `status = "confirmed"`, and binds currently open owned cart rows by setting `cart_items.order_id`.
+
+If no draft or submitted order exists, the endpoint **auto-creates a draft order** from the customer's open cart items and immediately confirms it — callers do not need to call the draft endpoint first.
+
+If the same customer already has another unpaid, non-cancelled submitted order for the same active table session, no new submitted order is created. The endpoint merges the currently open owned cart rows into that existing unpaid order, migrates any draft sharing references to that order, removes the now-empty draft, and recalculates the existing order amount.
 
 **Authentication:** required (Bearer token).
 
@@ -2203,10 +2229,10 @@ The final amount is rounded to 2 decimals.
 
 **Response (200):** unified table-view payload — see [§4.1 Get Current Table History](#41-get-current-table-history) for the full shape.
 
-**Response (404) — no draft order:**
+**Response (422) — empty cart:**
 
 ```json
-{ "message": "No draft order found." }
+{ "message": "Your cart is empty. Add items before confirming your order." }
 ```
 
 **Response (422) — no active table session:**
@@ -2400,25 +2426,25 @@ This is the **canonical "table view" response** — it is also returned (with th
 
 **Per-item field reference:**
 
-| Field                                                               | Type          | Description                                                                                                                                                                                                      |
-| ------------------------------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cart_item_id`                                                      | int           | Source `cart_items.id`.                                                                                                                                                                                          |
-| `menu_item_id`                                                      | int           | The menu item this cart entry references.                                                                                                                                                                        |
-| `name`, `image_url`                                                 | string\|null  | Cached from `menu_items`.                                                                                                                                                                                        |
-| `quantity`                                                          | int           | Cart quantity.                                                                                                                                                                                                   |
-| `unit_price`                                                        | float         | Per-unit VAT-inclusive (gross) price, including selected paid add-ons and selected modifier price adjustments.                                                                                                   |
-| `paid_addons`, `free_addons`, `removed_items`, `selected_modifiers` | array         | Selected customization options for this cart item. Names are resolved from stored IDs using `Accept-Language`; paid add-ons and modifier options include `vat_rate` and gross prices.                            |
-| `vat_rate`                                                          | float         | VAT rate resolved from `tax_categories` table for the vendor's country and item's `tax_category`.                                                                                                                |
-| `tax_category`                                                      | string        | Tax category slug (e.g. `food`, `beverage_non_alcoholic`, `beverage_alcoholic`).                                                                                                                                 |
-| `vat_amount`                                                        | float         | VAT portion of `line_total`, computed as `line_total - (line_total / (1 + vat_rate/100))`.                                                                                                                       |
-| `line_total`                                                        | float         | `unit_price × quantity`.                                                                                                                                                                                         |
-| `is_mine`                                                           | bool          | `true` if the cart_item belongs to the caller's own session.                                                                                                                                                     |
-| `shared_between`                                                    | int           | `1 + count(shared_order_ids)`. The number of orders splitting this item (owner + sharers).                                                                                                                       |
-| `shared_with`                                                       | object[]      | The orders that share this item with the owner. Each entry: `order_id`, `customer_id`, `customer_name`. Empty array if unshared.                                                                                 |
-| `my_share`                                                          | float         | `line_total / shared_between` — what each participating order contributes.                                                                                                                                       |
-| `status`                                                            | string\|null  | Per-item status derived from timestamps: `Served` when `served_at` is set, `Ready` when `ready_at` is set, `Preparing` when `preparing_start_at` is set, `Received` when `received_at` is set, otherwise `null`. |
-| `received_at`                                                       | string\|null | Vendor-formatted date and time set when the order is confirmed and the cart item is bound to the order.                                                                                                           |
-| `preparing_start_at`, `ready_at`, `served_at`                       | string\|null | Vendor-formatted preparation/service timestamps set by the vendor flow.                                                                                                                                          |
+| Field                                                               | Type         | Description                                                                                                                                                                                                     |
+| ------------------------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cart_item_id`                                                      | int          | Source`cart_items.id`.                                                                                                                                                                                          |
+| `menu_item_id`                                                      | int          | The menu item this cart entry references.                                                                                                                                                                       |
+| `name`, `image_url`                                                 | string\|null | Cached from`menu_items`.                                                                                                                                                                                        |
+| `quantity`                                                          | int          | Cart quantity.                                                                                                                                                                                                  |
+| `unit_price`                                                        | float        | Per-unit VAT-inclusive (gross) price, including selected paid add-ons and selected modifier price adjustments.                                                                                                  |
+| `paid_addons`, `free_addons`, `removed_items`, `selected_modifiers` | array        | Selected customization options for this cart item. Names are resolved from stored IDs using`Accept-Language`; paid add-ons and modifier options include `vat_rate` and gross prices.                            |
+| `vat_rate`                                                          | float        | VAT rate resolved from`tax_categories` table for the vendor's country and item's `tax_category`.                                                                                                                |
+| `tax_category`                                                      | string       | Tax category slug (e.g.`food`, `beverage_non_alcoholic`, `beverage_alcoholic`).                                                                                                                                 |
+| `vat_amount`                                                        | float        | VAT portion of`line_total`, computed as `line_total - (line_total / (1 + vat_rate/100))`.                                                                                                                       |
+| `line_total`                                                        | float        | `unit_price × quantity`.                                                                                                                                                                                        |
+| `is_mine`                                                           | bool         | `true` if the cart_item belongs to the caller's own session.                                                                                                                                                    |
+| `shared_between`                                                    | int          | `1 + count(shared_order_ids)`. The number of orders splitting this item (owner + sharers).                                                                                                                      |
+| `shared_with`                                                       | object[]     | The orders that share this item with the owner. Each entry:`order_id`, `customer_id`, `customer_name`. Empty array if unshared.                                                                                 |
+| `my_share`                                                          | float        | `line_total / shared_between` — what each participating order contributes.                                                                                                                                      |
+| `status`                                                            | string\|null | Per-item status derived from timestamps:`Served` when `served_at` is set, `Ready` when `ready_at` is set, `Preparing` when `preparing_start_at` is set, `Received` when `received_at` is set, otherwise `null`. |
+| `received_at`                                                       | string\|null | Vendor-formatted date and time set when the order is confirmed and the cart item is bound to the order.                                                                                                         |
+| `preparing_start_at`, `ready_at`, `served_at`                       | string\|null | Vendor-formatted preparation/service timestamps set by the vendor flow.                                                                                                                                         |
 
 **Item-set rule for an order:**
 For a given order `O` in `people[].orders[]`, an item appears in its `items[]` if either:
@@ -2467,10 +2493,10 @@ Every customer order object returned by table history, account history, restaura
 
 **Query Parameters:**
 
-| Param      | Type | Description                                             |
-| ---------- | ---- | ------------------------------------------------------- |
-| `page`     | int  | Orders page number (default: `1`).                      |
-| `per_page` | int  | Orders per restaurant group (default: `10`, max: `50`). |
+| Param      | Type | Description                                            |
+| ---------- | ---- | ------------------------------------------------------ |
+| `page`     | int  | Orders page number (default:`1`).                      |
+| `per_page` | int  | Orders per restaurant group (default:`10`, max: `50`). |
 
 **Pagination:** `history[].orders` is paginated per restaurant group. The top-level summary always reflects the full matching history, not only the current page.
 
@@ -2865,24 +2891,24 @@ Returns a structured receipt payload for a paid order, including restaurant lega
 
 **Field reference:**
 
-| Section                              | Field                                                                        | Source                                                  |
-| ------------------------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `restaurant.name`                    | `vendors.restaurant_name`                                                    |                                                         |
-| `restaurant.logo_url`                | `vendor_settings.logo_url`                                                   | Absolute URL                                            |
-| `restaurant.address`                 | `vendors.address, city, country`                                             | Joined with comma                                       |
-| `restaurant.vat_id`                  | `vendors.vat_number`                                                         |                                                         |
-| `restaurant.company_register_number` | `vendors.business_registration_number`                                       |                                                         |
-| `receipt.invoice_number`             | Auto-generated from `vendor_settings.invoice_prefix` + `next_invoice_number` | Persisted on `orders.invoice_number` after first access |
-| `receipt.locale`                     | English + vendor country code                                                | e.g. `en-AT`, `en-DE`                                   |
-| `receipt.table`                      | From `table_scan_session` → `restaurant_tables.name` or `Table {number}`     | `null` if no table session                              |
-| `order.items[].name`                 | Live menu item name resolved from `menu_item_id`                             | Localized using `Accept-Language`                       |
-| `order.items[].paid_addons`, `free_addons`, `removed_items`, `selected_modifiers` | Selected customization IDs or legacy names matched to current menu definitions | Names localized using `Accept-Language`                 |
-| `order.items[].tax_category`         | Uppercased `menu_items.tax_category`                                         | e.g. `FOOD`, `BEVERAGE_ALCOHOLIC`                       |
-| `payment.status`                     | `CONFIRMED` when `payment_received = true`                                   |                                                         |
-| `payment.transaction_id`             | `orders.transaction_id` or `order_payments.stripe_payment_intent_id`         |                                                         |
-| `payment.paid_at`                    | `orders.payment_confirmed_at` or `order_payments.paid_at`                    |                                                         |
-| `legal.invoice_note`                 | Hardcoded per vendor country                                                 | AT: § 11 UStG, DE: § 14 UStG, GB: UK VAT                |
-| `legal.rksv_required_check`          | `true` for Austrian vendors                                                  | Hardcoded                                               |
+| Section                                                                           | Field                                                                          | Source                                                 |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------ |
+| `restaurant.name`                                                                 | `vendors.restaurant_name`                                                      |                                                        |
+| `restaurant.logo_url`                                                             | `vendor_settings.logo_url`                                                     | Absolute URL                                           |
+| `restaurant.address`                                                              | `vendors.address, city, country`                                               | Joined with comma                                      |
+| `restaurant.vat_id`                                                               | `vendors.vat_number`                                                           |                                                        |
+| `restaurant.company_register_number`                                              | `vendors.business_registration_number`                                         |                                                        |
+| `receipt.invoice_number`                                                          | Auto-generated from`vendor_settings.invoice_prefix` + `next_invoice_number`    | Persisted on`orders.invoice_number` after first access |
+| `receipt.locale`                                                                  | English + vendor country code                                                  | e.g.`en-AT`, `en-DE`                                   |
+| `receipt.table`                                                                   | From`table_scan_session` → `restaurant_tables.name` or `Table {number}`        | `null` if no table session                             |
+| `order.items[].name`                                                              | Live menu item name resolved from`menu_item_id`                                | Localized using`Accept-Language`                       |
+| `order.items[].paid_addons`, `free_addons`, `removed_items`, `selected_modifiers` | Selected customization IDs or legacy names matched to current menu definitions | Names localized using`Accept-Language`                 |
+| `order.items[].tax_category`                                                      | Uppercased`menu_items.tax_category`                                            | e.g.`FOOD`, `BEVERAGE_ALCOHOLIC`                       |
+| `payment.status`                                                                  | `CONFIRMED` when `payment_received = true`                                     |                                                        |
+| `payment.transaction_id`                                                          | `orders.transaction_id` or `order_payments.stripe_payment_intent_id`           |                                                        |
+| `payment.paid_at`                                                                 | `orders.payment_confirmed_at` or `order_payments.paid_at`                      |                                                        |
+| `legal.invoice_note`                                                              | Hardcoded per vendor country                                                   | AT: § 11 UStG, DE: § 14 UStG, GB: UK VAT               |
+| `legal.rksv_required_check`                                                       | `true` for Austrian vendors                                                    | Hardcoded                                              |
 
 **Invoice number generation:**
 
@@ -2920,10 +2946,11 @@ Returns the customer-facing payment methods currently available for a restaurant
 **Authentication:** public route; no Bearer token required.
 
 **Query Parameters:**
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `restaurant_id` | string | yes | Vendor numeric ID, `vendor_public_id`, or restaurant slug |
-| `vendor_public_id` | string | no | Alias for `restaurant_id`; useful when the caller already has the vendor public ID |
+
+| Parameter          | Type   | Required | Description                                                                       |
+| ------------------ | ------ | -------- | --------------------------------------------------------------------------------- |
+| `restaurant_id`    | string | yes      | Vendor numeric ID,`vendor_public_id`, or restaurant slug                          |
+| `vendor_public_id` | string | no       | Alias for`restaurant_id`; useful when the caller already has the vendor public ID |
 
 **Response (200):**
 
@@ -2960,11 +2987,11 @@ Returns the customer-facing payment methods currently available for a restaurant
 
 ---
 
-### 4.4.1 Assign a Tablemate's Orders for Payment
+### 4.4.1 Assign a Tablemate's Order for Payment
 
 **POST** `/api/customer/payments/pay-for`
 
-Assigns all eligible orders belonging to another customer at the authenticated customer's current table to the authenticated customer for payment.
+Assigns a single eligible order belonging to another customer at the authenticated customer's current table to the authenticated customer for payment.
 
 **Authentication:** required (Bearer token).
 
@@ -2972,13 +2999,14 @@ Assigns all eligible orders belonging to another customer at the authenticated c
 
 ```json
 {
-    "customer_id": 8
+    "customer_id": 8,
+    "order_id": "ord-aB3xK9pQrS12"
 }
 ```
 
-`customer_id` is the numeric ID of another customer with an active session at the same restaurant table. Eligible orders are confirmed or later, unpaid, not payment-pending, and not cancelled. Draft orders and orders created after this request are not assigned. Repeating the same request is idempotent.
+Both fields are required. `customer_id` is the numeric ID of another customer with an active session at the same restaurant table. `order_id` accepts either the order's numeric ID or its `order_public_id` and must reference an eligible order in that customer's active session — confirmed or later, unpaid, not cancelled — otherwise a 422 validation error is returned on `order_id`. Only the referenced order is assigned; the customer's other orders are unaffected. Repeating the same request is idempotent. To pay for several of a tablemate's orders, call the endpoint once per order.
 
-On success, every customer with an active session at the table receives a `payment_updated` notification identifying the payer and the customer whose orders were assigned.
+On success, every customer with an active session at the table receives a `payment_updated` notification identifying the payer and the customer whose order was assigned.
 
 **Response (200):**
 
@@ -2989,7 +3017,7 @@ On success, every customer with an active session at the table receives a `payme
         "id": 7,
         "name": "Ali Khan"
     },
-    "orders_count": 2,
+    "orders_count": 1,
     "orders": [
         {
             "id": 42,
@@ -3005,7 +3033,7 @@ On success, every customer with an active session at the table receives a `payme
 { "message": "One or more orders are already assigned to another payer." }
 ```
 
-**Response (422):** returned for self-selection, no active table session, a customer outside the current table, or no eligible unpaid orders.
+**Response (422):** returned for a missing or ineligible `order_id`, self-selection, no active table session, or a customer outside the current table.
 
 ---
 
@@ -3058,11 +3086,11 @@ Requests a cash payment for the specified order plus every eligible order at the
 }
 ```
 
-| Field         | Type            | Required | Description                                                  |
-|---------------|-----------------|----------|--------------------------------------------------------------|
-| `order_id`    | string \| int   | Yes      | Numeric `orders.id` or `orders.order_public_id`.             |
-| `customer_id` | integer         | Yes      | Must match the authenticated customer's ID.                  |
-| `notes`       | string \| null  | No       | Free-text note shown to the waiter (max 500 chars).          |
+| Field         | Type          | Required | Description                                         |
+| ------------- | ------------- | -------- | --------------------------------------------------- |
+| `order_id`    | string\| int  | Yes      | Numeric`orders.id` or `orders.order_public_id`.     |
+| `customer_id` | integer       | Yes      | Must match the authenticated customer's ID.         |
+| `notes`       | string\| null | No       | Free-text note shown to the waiter (max 500 chars). |
 
 **Backend behavior:**
 
@@ -3082,7 +3110,7 @@ Requests a cash payment for the specified order plus every eligible order at the
 ```json
 {
     "message": "Cash payment requested. A waiter will come to your table.",
-    "amount": 42.50,
+    "amount": 42.5,
     "currency": "EUR"
 }
 ```
@@ -3105,29 +3133,19 @@ Requests a cash payment for the specified order plus every eligible order at the
 
 **POST** `/api/customer/payments/create-intent`
 
-Creates one Stripe PaymentIntent for the requested order plus every eligible order at the same active table whose `paid_by` is the authenticated customer. The requested order may be owned by the authenticated customer or assigned to them. This endpoint is for Stripe Elements / PaymentElement; the frontend stays in the app and uses the returned `clientSecret`.
+Creates one Stripe PaymentIntent covering every payable order in the authenticated customer's current table visit: the customer's own unpaid orders in their active table session, plus every unpaid order at the same table whose `paid_by` is the authenticated customer. This endpoint is for Stripe Elements / PaymentElement; the frontend stays in the app and uses the returned `clientSecret`.
 
 **Authentication:** required (Bearer token).
 
-**Body:**
-
-```json
-{
-    "order_id": "ord-aB3xK9pQrS12",
-    "customer_id": 7
-}
-```
-
-`order_id` may be either the numeric `orders.id` or `orders.order_public_id`. `customer_id` must be the numeric authenticated customer ID from the Bearer token.
+**Body:** none. All covered orders are derived from the authenticated customer's active table session.
 
 **Backend behavior:**
 
-- Resolves `order_id` by `orders.order_public_id` first, then numeric `orders.id`.
-- Validates that `customer_id` matches the authenticated customer.
-- Validates that the order belongs to or is assigned to the authenticated customer.
-- Rejects an owner attempting to pay an order assigned to someone else with HTTP `409`.
-- Includes all confirmed-or-later, unpaid orders assigned to the payer in the same active table visit.
-- Derives `table_session_id` from `orders.table_scan_session_id`; the frontend does not send it.
+- Requires an active table scan session for the authenticated customer (HTTP `422` otherwise).
+- Includes the customer's own confirmed-or-later, unpaid orders in that session, excluding orders another customer has claimed via pay-for.
+- Includes all confirmed-or-later, unpaid orders at the same table assigned to the payer via pay-for.
+- Returns HTTP `409` when the customer's only unpaid orders are assigned to another payer, and HTTP `422` when there is nothing to pay.
+- Derives `table_session_id` from the covered orders; the frontend does not send it.
 - Recalculates each covered order from bound and shared cart rows and charges their combined total.
 - Requires the restaurant's `vendor_settings` to have Stripe enabled, a `stripe_account_id`, and completed onboarding.
 - Creates a platform PaymentIntent with `transfer_data.destination` set to the vendor Stripe account ID.
@@ -3184,18 +3202,16 @@ Updates an existing Stripe PaymentIntent after the customer chooses a tip. For a
 ```json
 {
     "payment_intent_id": "pi_123_secret_abc",
-    "order_id": "ord-aB3xK9pQrS12",
-    "customer_id": 123,
     "tip_amount": 5.0
 }
 ```
 
-`payment_intent_id` may be either the PaymentIntent ID (`pi_123`) or the client secret (`pi_123_secret_abc`). `order_id` may be either the numeric `orders.id` or `orders.order_public_id`. `customer_id` must be the numeric authenticated customer ID from the Bearer token.
+`payment_intent_id` may be either the PaymentIntent ID (`pi_123`) or the client secret (`pi_123_secret_abc`). Both fields are required; no other data is accepted.
 
 **Backend behavior:**
 
-- Resolves the order and validates that it belongs to the authenticated customer.
-- Validates that the PaymentIntent belongs to the same order/customer through `order_payments`.
+- Resolves the payment by `payment_intent_id` scoped to the authenticated customer through `order_payments` (HTTP `404` when the intent belongs to another customer).
+- Validates that the Stripe PaymentIntent metadata matches the stored payment.
 - Stores `tip_amount` on the payer-owned anchor order.
 - Keeps `orders.amount` as the order subtotal/payable amount before tip.
 - Updates the Stripe PaymentIntent amount to the sum of all covered orders plus the tip.
@@ -3244,10 +3260,11 @@ Retrieves the PaymentIntent from Stripe, verifies it matches the authenticated c
 ```
 
 **Status values:**
-| Field | Values |
-|-------|--------|
-| `status` | `requires_payment_method`, `requires_confirmation`, `requires_action`, `processing`, `succeeded`, `canceled` |
-| `orderStatus` | `pending`, `paid`, `failed` |
+
+| Field         | Values                                                                                                       |
+| ------------- | ------------------------------------------------------------------------------------------------------------ |
+| `status`      | `requires_payment_method`, `requires_confirmation`, `requires_action`, `processing`, `succeeded`, `canceled` |
+| `orderStatus` | `pending`, `paid`, `failed`                                                                                  |
 
 **Mapping:**
 
@@ -3501,14 +3518,14 @@ Returns the authenticated customer's most recent notifications (up to 50) and an
 
 **Event types:**
 
-| Event | Trigger |
-|-------|---------|
-| `cart_updated` | Cart item added, updated, or removed by any customer at the table |
-| `cart_item_updated` | Individual cart item status changed by vendor (preparing, ready, served) |
-| `order_updated` | Order created, confirmed, ready, served, picked up, or cancelled |
-| `payment_updated` | Payment assignment claimed/released, payment initiated/completed, or cash payment confirmed |
-| `participant_added` | New customer joined the table session |
-| `session_expire` | Table session closed |
+| Event               | Trigger                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------- |
+| `cart_updated`      | Cart item added, updated, or removed by any customer at the table                           |
+| `cart_item_updated` | Individual cart item status changed by vendor (preparing, ready, served)                    |
+| `order_updated`     | Order created, confirmed, ready, served, picked up, or cancelled                            |
+| `payment_updated`   | Payment assignment claimed/released, payment initiated/completed, or cash payment confirmed |
+| `participant_added` | New customer joined the table session                                                       |
+| `session_expire`    | Table session closed                                                                        |
 
 `created_at` uses the related vendor's saved date/time formats. New restaurant notifications retain `vendor_id` so the correct format can be resolved.
 
@@ -3555,10 +3572,11 @@ Marks all unread notifications for the authenticated customer as read.
 **GET** `/api/customer/reservations`
 
 **Query Parameters:**
-| Param | Type | Description |
-|-------|------|-------------|
-| `tab` | string | `upcoming`, `pending`, `past`, `cancelled` (default: upcoming) |
-| `per_page` | int | Items per page (default: 20) |
+
+| Param      | Type   | Description                                                    |
+| ---------- | ------ | -------------------------------------------------------------- |
+| `tab`      | string | `upcoming`, `pending`, `past`, `cancelled` (default: upcoming) |
+| `per_page` | int    | Items per page (default: 20)                                   |
 
 ---
 
@@ -3885,10 +3903,7 @@ Returns all table scan sessions for the authenticated customer that have at leas
                 {
                     "order_id": "ord-aB3xK9pQrS12",
                     "total_amount_paid": 27.5,
-                    "items": [
-                        { "cart_item_id": 1 },
-                        { "cart_item_id": 2 }
-                    ]
+                    "items": [{ "cart_item_id": 1 }, { "cart_item_id": 2 }]
                 }
             ],
             "review": {
@@ -3929,9 +3944,7 @@ Returns all table scan sessions for the authenticated customer that have at leas
                 {
                     "order_id": "ord-kL9mN2pQrT45",
                     "total_amount_paid": 15.0,
-                    "items": [
-                        { "cart_item_id": 5 }
-                    ]
+                    "items": [{ "cart_item_id": 5 }]
                 }
             ]
         }
@@ -3955,12 +3968,12 @@ Returns every order and cart item for the table scan session, along with review 
 
 **Status flags:**
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `reviewed` | boolean | `true` if a review has already been submitted for this session. |
+| Field        | Type    | Description                                                                                                                   |
+| ------------ | ------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `reviewed`   | boolean | `true` if a review has already been submitted for this session.                                                               |
 | `reviewable` | boolean | `true` only when all orders are paid, all items are served, **and** no review exists yet. `false` if a review already exists. |
-| `all_paid` | boolean | `true` if every order in the session has `payment_received = true`. |
-| `all_served` | boolean | `true` if every cart item (including shared items) has `served_at` set. |
+| `all_paid`   | boolean | `true` if every order in the session has `payment_received = true`.                                                           |
+| `all_served` | boolean | `true` if every cart item (including shared items) has `served_at` set.                                                       |
 
 **Response (200) — no existing review:**
 
@@ -3975,10 +3988,7 @@ Returns every order and cart item for the table scan session, along with review 
         {
             "order_id": "ord-aB3xK9pQrS12",
             "total_amount_paid": 27.5,
-            "items": [
-                { "cart_item_id": 1 },
-                { "cart_item_id": 2 }
-            ]
+            "items": [{ "cart_item_id": 1 }, { "cart_item_id": 2 }]
         }
     ]
 }
@@ -3997,10 +4007,7 @@ Returns every order and cart item for the table scan session, along with review 
         {
             "order_id": "ord-aB3xK9pQrS12",
             "total_amount_paid": 27.5,
-            "items": [
-                { "cart_item_id": 1 },
-                { "cart_item_id": 2 }
-            ]
+            "items": [{ "cart_item_id": 1 }, { "cart_item_id": 2 }]
         }
     ],
     "review": {
