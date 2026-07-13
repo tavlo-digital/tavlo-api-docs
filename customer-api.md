@@ -2754,6 +2754,135 @@ Returns one order detail for the authenticated customer.
 
 ---
 
+### 4.3.0a List Receipts
+
+**GET** `/api/customer/receipts`
+
+Returns every completed payment the authenticated customer made (a "receipt" is one payment — Stripe intent or confirmed cash — that may cover several orders, e.g. their own plus tablemates' orders claimed via pay-for). Only completed payments appear: status `succeeded` or a non-null `paid_at`. Newest first.
+
+**Authentication:** required (Bearer token).
+
+**Response (200):**
+
+```json
+{
+    "receipts": [
+        {
+            "receipt_id": 12,
+            "payment_intent_id": "pi_3Nxxx",
+            "restaurant": {
+                "restaurant_public_id": "ven-Xy12",
+                "restaurant_name": "Trattoria Roma",
+                "logo_url": "https://cdn.example.com/logo.png"
+            },
+            "amount": 21.63,
+            "currency": "EUR",
+            "payment_method": "stripe",
+            "status": "succeeded",
+            "paid_at": "13.07.2026 14:05",
+            "orders_count": 2,
+            "orders": [
+                { "id": 42, "order_public_id": "ord-aB3xK9pQrS12", "amount": 14.42 },
+                { "id": 43, "order_public_id": "ord-Zt5rM2wNqA34", "amount": 7.21 }
+            ]
+        }
+    ],
+    "receipts_count": 1
+}
+```
+
+`payment_method` is `stripe` when the payment has a PaymentIntent, otherwise `cash`. `orders[].amount` is each order's share of the payment.
+
+---
+
+### 4.3.0b Receipt Detail
+
+**GET** `/api/customer/receipts/{receiptId}`
+
+Returns a structured receipt for one completed payment in the same format as the single-order receipt below, except the single `"order": {}` block is replaced by an `"orders": []` array containing **every order paid by that intent** — the customer's own orders plus any tablemates' orders they paid for. `receiptId` is the numeric `receipt_id` from the list endpoint.
+
+**Authentication:** required (Bearer token). Only the paying customer can access the receipt; another customer's receipt returns 404.
+
+**Language header:** `Accept-Language` behaves exactly as in the single-order receipt.
+
+**Rules:**
+
+- The payment must be completed (status `succeeded` or non-null `paid_at`) — otherwise 422.
+- On first access, an invoice number is atomically generated and persisted on the anchor order (shared with the single-order receipt of that order).
+
+**Response (200):**
+
+```json
+{
+    "data": {
+        "restaurant": {
+            "name": "Trattoria Roma",
+            "logo_url": "https://cdn.example.com/logo.png",
+            "address": "Main Street 1, Vienna, AT",
+            "vat_id": "ATU12345678",
+            "phone": "+43 1 234 5678",
+            "email": "office@trattoria.example",
+            "company_register_number": "FN 123456a"
+        },
+        "receipt": {
+            "receipt_id": 12,
+            "invoice_number": "INV-0001001",
+            "date": "13.07.2026",
+            "time": "14:05",
+            "table": "Table 1",
+            "order_ids": ["ord-aB3xK9pQrS12", "ord-Zt5rM2wNqA34"],
+            "currency": "EUR",
+            "locale": "en-AT"
+        },
+        "orders": [
+            {
+                "order_id": "ord-aB3xK9pQrS12",
+                "paid_by": null,
+                "tip_amount": 2.0,
+                "items": []
+            },
+            {
+                "order_id": "ord-Zt5rM2wNqA34",
+                "paid_by": { "id": 7, "name": "Ali Khan" },
+                "tip_amount": 0,
+                "items": []
+            }
+        ],
+        "tax_groups": [],
+        "totals": {
+            "service_fee": 0.63,
+            "total_tips": 2.0,
+            "grand_total": 23.63,
+            "amount_charged": 23.63
+        },
+        "payment": {
+            "method": "stripe",
+            "status": "CONFIRMED",
+            "transaction_id": "pi_3Nxxx",
+            "paid_at": "13.07.2026 14:05"
+        },
+        "legal": {}
+    },
+    "meta": {
+        "generated_at": "13.07.2026 14:06",
+        "template": "tavlo-receipt-template",
+        "version": "1.0"
+    }
+}
+```
+
+Each entry in `orders[].items` uses the same item shape as the single-order receipt (`unit_price_gross`, `line_gross`, VAT fields, shared-item shares, add-ons, modifiers). `tax_groups` and `totals` are computed across all covered orders (shared items counted once); `totals.amount_charged` is the actual amount captured by the payment.
+
+**Response (422):**
+
+```json
+{ "message": "Receipt is only available for completed payments." }
+```
+
+**Response (404):** unknown `receiptId` or a receipt belonging to another customer.
+
+---
+
 ### 4.3.1 Order Receipt
 
 **GET** `/api/customer/orders/{orderPublicId}/receipt`
