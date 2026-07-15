@@ -2146,7 +2146,90 @@ Share or unshare a `cart_item` for the caller's draft order. At least one of `sh
 
 **Side-effect — order amount recalculation:** after sharing or unsharing, the `amount` of every affected unpaid order is recalculated. Affected orders include the caller's order, the cart item's owner order, and all other orders in the item's `shared_order_ids`. This keeps order amounts in sync with the current sharing state even when sharing changes after order confirmation.
 
-**Response (200):** unified table-view payload — see [§4.1 Get Current Table History](#41-get-current-table-history) for the full shape.
+**Response behavior:** the endpoint returns a compact response centered on an authoritative `state_patch`, together with compatibility `order_snapshots` and `removed_order_ids`; it does not rebuild or return the complete table-history payload. The frontend applies `state_patch` directly to its existing table-history cache, so a successful share/unshare does not require another `GET /api/customer/table/history` request.
+
+The exact same patch is included at `metadata.state_patch` in the `order_updated` realtime notification sent to every active customer at the table. The initiating customer can therefore use the mutation response immediately, while tablemates apply the realtime copy. Both copies have the same `id` and are safe to deduplicate.
+
+**Response (200):**
+
+```json
+{
+    "message": "Item sharing updated.",
+    "order_snapshots": [
+        {
+            "order_id": 42,
+            "order_public_id": "ord-aB3xK9pQrS12",
+            "table_scan_session_id": 12,
+            "status": "confirmed",
+            "amount": 10.45,
+            "tip_amount": 0,
+            "service_fee": 0,
+            "currency": "EUR",
+            "payment_method": null,
+            "payment_pending": false,
+            "payment_received": false,
+            "paid_by": null
+        }
+    ],
+    "removed_order_ids": [],
+    "state_patch": {
+        "id": "019b10e7-9924-7371-9008-11979e306858",
+        "version": 1784123456796000,
+        "operation": "order.sharing_updated",
+        "orders": {
+            "upsert": [
+                {
+                    "id": 42,
+                    "order_public_id": "ord-aB3xK9pQrS12",
+                    "parent_order_id": null,
+                    "customer_id": 7,
+                    "table_scan_session_id": 12,
+                    "status": "confirmed",
+                    "amount": 10.45,
+                    "service_fee": 0,
+                    "tip_amount": 0,
+                    "currency": "EUR",
+                    "payment_pending": false,
+                    "payment_received": false,
+                    "paid_by": null,
+                    "visible_item_ids": [3]
+                }
+            ],
+            "remove_ids": []
+        },
+        "items": {
+            "upsert": [
+                {
+                    "cart_item_id": 3,
+                    "menu_item_id": 51,
+                    "owner_order_id": 87,
+                    "owner_table_scan_session_id": 18,
+                    "name": "Pizza",
+                    "quantity": 1,
+                    "shared_order_ids": [42],
+                    "shared_between": 2,
+                    "shared_with": [
+                        {
+                            "order_id": 42,
+                            "customer_id": 7,
+                            "customer_name": "Alice Smith"
+                        }
+                    ],
+                    "unit_price": 20.89,
+                    "line_total": 20.89,
+                    "share_price": 10.45,
+                    "vat_rate": 10,
+                    "vat_amount": 1.9,
+                    "tax_category": "food"
+                }
+            ],
+            "remove_ids": []
+        }
+    }
+}
+```
+
+`orders.upsert` contains only affected orders, each with an authoritative `visible_item_ids` list. `items.upsert` contains only affected item rows with current ownership, pricing, tax, status, and sharing fields. An empty side order deleted by unsharing appears in `orders.remove_ids`. The arrays are absolute state, not increments; clients should deduplicate by patch `id` and ignore an older `version` after applying a newer one.
 
 **Response (404) — order not found:**
 
@@ -2257,7 +2340,7 @@ The final amount is rounded to 2 decimals.
 
 Returns the unified table-view payload — table + vendor + session metadata, every active session at the same table, and every order each person has placed in their active table session. Draft orders show the customer's currently open cart rows; confirmed-or-later orders show rows bound through `cart_items.order_id` plus shared rows from `shared_order_ids`. Each person returns `orders` as an array containing all matching orders for that same `session_id`; it is an empty array when no order exists.
 
-This is the **canonical "table view" response** — it is also returned (with the same shape) by [§3.15](#315-create-order-draft-), [§3.16](#316-update-order-), and [§3.17](#317-create-order-confirmed-).
+This is the **canonical "table view" response**. Order draft and confirmation flows may return this complete shape; [§3.18 Update Order](#318-update-order-) returns only a compact `state_patch` and relies on this endpoint solely for initial loading or recovery.
 
 **Authentication:** required (Bearer token).
 
