@@ -3116,6 +3116,81 @@ Returns the customer-facing payment methods currently available for a restaurant
 
 ---
 
+#### Payment Mutation `state_patch`
+
+Successful table-scoped payment mutations include an additive `state_patch`. The frontend applies this patch directly to its existing table-history cache; it does not need to request `GET /api/customer/table/history` after the mutation. The exact same patch is included at `metadata.state_patch` in the realtime notification delivered to the other active customers at the table.
+
+```json
+{
+    "state_patch": {
+        "id": "019b10d7-68d6-7a35-88bd-617293b6b44e",
+        "version": 1784123456789000,
+        "operation": "payment.assigned",
+        "orders": {
+            "upsert": [
+                {
+                    "id": 42,
+                    "order_public_id": "ord-aB3xK9pQrS12",
+                    "parent_order_id": null,
+                    "customer_id": 8,
+                    "table_scan_session_id": 15,
+                    "status": "confirmed",
+                    "amount": 12.65,
+                    "service_fee": 0,
+                    "tip_amount": 0,
+                    "currency": "EUR",
+                    "payment_pending": false,
+                    "payment_received": false,
+                    "paid_by": { "id": 7, "name": "Ali Khan" },
+                    "visible_item_ids": [501]
+                }
+            ],
+            "remove_ids": []
+        },
+        "items": {
+            "upsert": [
+                {
+                    "cart_item_id": 501,
+                    "menu_item_id": 9,
+                    "owner_order_id": 42,
+                    "owner_table_scan_session_id": 15,
+                    "name": "Caprese Salad",
+                    "quantity": 1,
+                    "shared_order_ids": [],
+                    "shared_between": 1,
+                    "shared_with": [],
+                    "unit_price": 12.65,
+                    "line_total": 12.65,
+                    "share_price": 12.65,
+                    "vat_rate": 10,
+                    "vat_amount": 1.15,
+                    "tax_category": "food"
+                }
+            ],
+            "remove_ids": []
+        }
+    }
+}
+```
+
+`orders.upsert` contains complete authoritative rows for only the affected orders, including identity, totals, lifecycle/payment fields, `paid_by`, and `visible_item_ids`. `items.upsert` contains complete display, customization, price, tax, sharing, and preparation-state fields for only the affected items. IDs in either `remove_ids` array must be removed from the local cache. Patches are absolute and idempotent: deduplicate them by `id` and ignore a lower `version` after a newer patch has already been applied.
+
+For readability, the route-specific examples below abbreviate the repeated affected rows as empty `upsert` arrays. Successful mutations populate those arrays whenever orders or items changed, as shown in the populated example above.
+
+| Route | `operation` |
+| --- | --- |
+| `POST /payments/pay-for` | `payment.assigned` |
+| `DELETE /payments/pay-for/{orderId}` | `payment.assignment_released` |
+| `POST /payments/request-cash` | `payment.cash_requested` |
+| `POST /payments/create-intent` | `payment.initiated` |
+| `POST /payments/update-intent` | `payment.updated` |
+| `DELETE /payments/intent` | `payment.canceled` |
+| `GET /payments/verify` | `payment.verified`, or `payment.completed` when verification first observes success |
+| successful Stripe webhook notification | `payment.completed` |
+| waiter/vendor cash-confirmation notification | `payment.cash_confirmed` |
+
+---
+
 ### 4.4.1 Assign a Tablemate's Order for Payment
 
 **POST** `/api/customer/payments/pay-for`
@@ -3128,14 +3203,15 @@ Assigns a single eligible order belonging to another customer at the authenticat
 
 ```json
 {
-    "customer_id": 8,
     "order_id": "ord-aB3xK9pQrS12"
 }
 ```
 
-Both fields are required. `customer_id` is the numeric ID of another customer with an active session at the same restaurant table. `order_id` accepts either the order's numeric ID or its `order_public_id` and must reference an eligible order in that customer's active session — confirmed or later, unpaid, not cancelled — otherwise a 422 validation error is returned on `order_id`. Only the referenced order is assigned; the customer's other orders are unaffected. Repeating the same request is idempotent. To pay for several of a tablemate's orders, call the endpoint once per order.
+`order_id` is required. It accepts either the order's numeric ID or its `order_public_id` and must reference an eligible tablemate order in the current active table session — confirmed or later, unpaid, and not cancelled — otherwise a 422 validation error is returned on `order_id`. Only the referenced order is assigned; the customer's other orders are unaffected. Repeating the same request is idempotent. To pay for several orders, call the endpoint once per order.
 
-On success, every customer with an active session at the table receives a `payment_updated` notification identifying the payer and the customer whose order was assigned.
+If the payer previously shared any item owned by the selected order, those individual share references are removed atomically before full-order coverage is assigned. The returned `state_patch` contains every recalculated order/item and any empty side-order ID that was removed.
+
+On success, every customer with an active session at the table receives an `order_updated` notification identifying the payer and containing the same `state_patch`.
 
 **Response (200):**
 
@@ -3152,7 +3228,14 @@ On success, every customer with an active session at the table receives a `payme
             "id": 42,
             "order_public_id": "ord-aB3xK9pQrS12"
         }
-    ]
+    ],
+    "state_patch": {
+        "id": "019b10d7-68d6-7a35-88bd-617293b6b44e",
+        "version": 1784123456789000,
+        "operation": "payment.assigned",
+        "orders": { "upsert": [], "remove_ids": [] },
+        "items": { "upsert": [], "remove_ids": [] }
+    }
 }
 ```
 
@@ -3168,11 +3251,11 @@ On success, every customer with an active session at the table receives a `payme
 
 ### 4.4.2 Release a Tablemate's Payment Assignment
 
-**DELETE** `/api/customer/payments/pay-for/{customerId}`
+**DELETE** `/api/customer/payments/pay-for/{orderId}`
 
-Releases the authenticated customer's unpaid assignments for the selected tablemate. Successfully paid orders retain their payer identity for history and receipts. The operation is idempotent when no releasable orders remain.
+Releases the authenticated customer's assignment for the selected unpaid order. `orderId` accepts the numeric ID or `order_public_id`. Successfully paid orders retain their payer identity for history and receipts. The operation is idempotent when no releasable order remains. Any unpaid side order merged back into the main order appears in `state_patch.orders.remove_ids`.
 
-When at least one assignment is released, every customer with an active session at the table receives a `payment_updated` notification.
+When at least one assignment is released, every customer with an active session at the table receives an `order_updated` notification containing the same `state_patch`.
 
 **Authentication:** required (Bearer token).
 
@@ -3183,7 +3266,14 @@ When at least one assignment is released, every customer with an active session 
 ```json
 {
     "message": "Payment assignment released.",
-    "released_orders_count": 2
+    "released_orders_count": 1,
+    "state_patch": {
+        "id": "019b10d8-45bf-7c9a-a541-c5881b87ee98",
+        "version": 1784123456790000,
+        "operation": "payment.assignment_released",
+        "orders": { "upsert": [], "remove_ids": [] },
+        "items": { "upsert": [], "remove_ids": [] }
+    }
 }
 ```
 
@@ -3193,7 +3283,7 @@ When at least one assignment is released, every customer with an active session 
 { "message": "Orders with an active payment cannot be released." }
 ```
 
-**Response (422):** returned when the authenticated customer has no active table session or the selected customer is not active at the same table.
+**Response (422):** returned when the authenticated customer has no active table session.
 
 ---
 
@@ -3233,6 +3323,7 @@ Requests a cash payment for the specified order plus every eligible order at the
 - Creates one `order_payments` row with `status: 'cash_requested'`, `payment_method: 'cash'`, and `notes` in metadata.
 - Updates each covered order: `payment_method = 'cash'`, `payment_pending = true`.
 - Sends a `payment_updated` notification to all customers at the table and to waiter/vendor staff.
+- Returns the same `payment.cash_requested` state patch sent to table customers so the initiator can lock the affected orders without reloading history.
 
 **Response (200):**
 
@@ -3240,7 +3331,14 @@ Requests a cash payment for the specified order plus every eligible order at the
 {
     "message": "Cash payment requested. A waiter will come to your table.",
     "amount": 42.5,
-    "currency": "EUR"
+    "currency": "EUR",
+    "state_patch": {
+        "id": "019b10d9-58be-7f9d-858d-0db5e086aa72",
+        "version": 1784123456791000,
+        "operation": "payment.cash_requested",
+        "orders": { "upsert": [], "remove_ids": [] },
+        "items": { "upsert": [], "remove_ids": [] }
+    }
 }
 ```
 
@@ -3280,6 +3378,7 @@ Creates one Stripe PaymentIntent covering every payable order in the authenticat
 - Creates a platform PaymentIntent with `transfer_data.destination` set to the vendor Stripe account ID.
 - Stores one `order_payments` row and links every covered order through `order_payment_orders` for audit and webhook reconciliation.
 - Returns the existing active PaymentIntent when the request is retried.
+- Returns a `payment.initiated` state patch whose order rows have `payment_pending: true`; the same patch is sent in the table notification.
 
 **PaymentIntent metadata:**
 
@@ -3300,7 +3399,14 @@ Creates one Stripe PaymentIntent covering every payable order in the authenticat
 ```json
 {
     "clientSecret": "pi_123_secret_abc",
-    "paymentIntentId": "pi_123"
+    "paymentIntentId": "pi_123",
+    "state_patch": {
+        "id": "019b10da-d2d5-7aed-ac19-11414c55c7b7",
+        "version": 1784123456792000,
+        "operation": "payment.initiated",
+        "orders": { "upsert": [], "remove_ids": [] },
+        "items": { "upsert": [], "remove_ids": [] }
+    }
 }
 ```
 
@@ -3345,13 +3451,21 @@ Updates an existing Stripe PaymentIntent after the customer chooses a tip. For a
 - Keeps `orders.amount` as the order subtotal/payable amount before tip.
 - Updates the Stripe PaymentIntent amount to the sum of all covered orders plus the tip.
 - Updates `order_payments.amount` to the final charged amount including tip.
+- Returns a `payment.updated` state patch for every covered order and includes the same patch in realtime notification metadata.
 
 **Response (200):**
 
 ```json
 {
     "clientSecret": "pi_123_secret_abc",
-    "paymentIntentId": "pi_123"
+    "paymentIntentId": "pi_123",
+    "state_patch": {
+        "id": "019b10dc-17df-7971-ad78-f1a862fd3923",
+        "version": 1784123456793000,
+        "operation": "payment.updated",
+        "orders": { "upsert": [], "remove_ids": [] },
+        "items": { "upsert": [], "remove_ids": [] }
+    }
 }
 ```
 
@@ -3384,7 +3498,14 @@ Retrieves the PaymentIntent from Stripe, verifies it matches the authenticated c
 ```json
 {
     "status": "succeeded",
-    "orderStatus": "paid"
+    "orderStatus": "paid",
+    "state_patch": {
+        "id": "019b10dd-808f-7de5-a068-1f8fbba8011c",
+        "version": 1784123456794000,
+        "operation": "payment.completed",
+        "orders": { "upsert": [], "remove_ids": [] },
+        "items": { "upsert": [], "remove_ids": [] }
+    }
 }
 ```
 
@@ -3400,11 +3521,47 @@ Retrieves the PaymentIntent from Stripe, verifies it matches the authenticated c
 - `succeeded` → `orderStatus: "paid"` and `orders.payment_received = true`.
 - `processing`, `requires_action`, `requires_confirmation`, `requires_payment_method` → `orderStatus: "pending"`.
 - `canceled` or failed webhook events → `orderStatus: "failed"`.
+- The patch operation is `payment.completed` when this verification first observes a successful payment; otherwise it is `payment.verified`.
 
 **Response (404):**
 
 ```json
 { "message": "No query results for model [App\\Models\\OrderPayment]." }
+```
+
+---
+
+### 4.8.1 Cancel Active Stripe Payment Intent
+
+**DELETE** `/api/customer/payments/intent`
+
+Cancels the authenticated customer's non-processing Stripe PaymentIntent for the current active table, resets `payment_pending` on every covered unpaid order, and returns the authoritative unlock patch. A Stripe intent already in `processing` cannot be canceled.
+
+**Authentication:** required (Bearer token).
+
+**Request body:** none.
+
+**Response (200):**
+
+```json
+{
+    "canceled": true,
+    "state_patch": {
+        "id": "019b10de-35a8-7540-9258-42530b931761",
+        "version": 1784123456795000,
+        "operation": "payment.canceled",
+        "orders": { "upsert": [], "remove_ids": [] },
+        "items": { "upsert": [], "remove_ids": [] }
+    }
+}
+```
+
+When no active intent remains, the idempotent response is `canceled: false`; `state_patch` is still present with empty upsert/removal arrays.
+
+**Response (409):**
+
+```json
+{ "message": "A payment is currently processing and cannot be canceled." }
 ```
 
 ---
@@ -3429,6 +3586,8 @@ Receives Stripe PaymentIntent events and keeps `order_payments` and every order 
 ```json
 { "received": true }
 ```
+
+When the webhook changes customer-visible order state, the `payment_updated` realtime notification contains `metadata.state_patch` with operation `payment.completed`. The Stripe webhook response itself remains the acknowledgement shown above.
 
 **Response (400) — invalid signature:**
 
