@@ -428,6 +428,50 @@ Revokes all access tokens for the customer.
 
 ---
 
+### 1.9 Authorize Customer Reverb Channel
+
+**POST** `/api/customer/broadcasting/auth` 🔒
+
+Authorizes the authenticated customer to subscribe to their private Laravel Reverb channel. Laravel
+Echo calls this endpoint automatically when joining `private-customer.{customer_id}`.
+
+**Authentication:** required (`Authorization: Bearer {customer_token}`).
+
+**Request body:**
+
+```json
+{
+    "socket_id": "1234.5678",
+    "channel_name": "private-customer.42"
+}
+```
+
+**Response (200):**
+
+```json
+{
+    "auth": "reverb-public-app-key:channel-signature"
+}
+```
+
+The customer may authorize only the channel matching their authenticated customer ID. The response
+contains a signature bound to that socket and channel; the Reverb application secret is never
+returned to the client.
+
+**Errors:**
+
+- `401` — missing or invalid customer Bearer token.
+- `403` — attempted subscription to another customer's channel.
+- `422` — missing or invalid `socket_id` / `channel_name`.
+- `503` — Reverb application key or secret is not configured.
+
+Customer Reverb messages use event name `.notification.created` and contain the same `event_id`,
+`event`, `message`, and `metadata` values as the persisted notification. During the dual-publish
+rollout, clients deduplicate the Reverb and Supabase copies using `metadata.event_id`. Customer
+state updates do not depend on the notification row being inserted first.
+
+---
+
 ## 2. Profile
 
 ### 2.1 Get Profile Overview
