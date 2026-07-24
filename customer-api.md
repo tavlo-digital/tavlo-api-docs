@@ -4860,7 +4860,37 @@ Returns an empty `data` array when the customer has no reviewable sessions at th
 
 ---
 
-### 8.6 Get Session Items by Order
+### 8.6 Get Review Eligibility for a Vendor
+
+**GET** `/api/customer/reviews/vendor/{vendorPublicId}/eligibility`
+
+**Authentication:** required (`auth:customer`).
+
+**Request body:** none.
+
+Reports which kinds of reviews the vendor currently allows, based on the vendor's **Reviews** settings. The client uses these flags to decide whether to surface the restaurant-review, per-item-review, and anonymous-review options.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enableReviews` | boolean | Whether customers may rate and review the restaurant. |
+| `enableMenuReviews` | boolean | Whether customers may rate and review each ordered item. |
+| `allowAnonymousReviews` | boolean | Whether unlogged guests may rate and review. |
+
+**Response (200):**
+
+```json
+{
+    "enableReviews": true,
+    "enableMenuReviews": false,
+    "allowAnonymousReviews": false
+}
+```
+
+**Response (404):** Vendor not found.
+
+---
+
+### 8.7 Get Session Items by Order
 
 **GET** `/api/customer/reviews/order/{orderPublicId}/session`
 
@@ -4912,7 +4942,7 @@ The response uses `errors.order` with one of these messages:
 
 ---
 
-### 8.7 Create Review
+### 8.8 Create Review
 
 **POST** `/api/customer/reviews`
 
@@ -4996,7 +5026,7 @@ For multipart clients, send nested fields such as `photos[]`, `items[0][cart_ite
 
 ---
 
-### 8.8 Update Review
+### 8.9 Update Review
 
 **PATCH** `/api/customer/reviews/{reviewPublicId}`
 
@@ -5087,7 +5117,7 @@ All fields are optional. If `items` is provided, each item must belong to an ord
 
 ---
 
-### 8.9 Delete Review
+### 8.10 Delete Review
 
 **DELETE** `/api/customer/reviews/{reviewPublicId}`
 
