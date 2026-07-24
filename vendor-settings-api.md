@@ -219,12 +219,25 @@ Uploads a cover photo. Previous cover photo is replaced.
 
 | Field | Type | Constraints |
 |-------|------|-------------|
-| `cover` | file | Required. jpg, jpeg, png, or webp. Max 5 MB. |
+| `cover` | file | Required. jpg, jpeg, png, or webp. Max 5 MB. Must be **16:9** aspect ratio, minimum **1200 × 675 px** (recommended **1600 × 900 px**). |
 
 ### Response `200 OK`
 ```json
 {
   "coverPhotoUrl": "https://storage.example.com/vendors/1/cover/cover.jpg"
+}
+```
+
+### Response `422 Unprocessable Content` (invalid dimensions)
+Returned when the image is not 16:9 or is smaller than the 1200 × 675 px minimum:
+```json
+{
+  "message": "The cover image must have a 16:9 aspect ratio and be at least 1200×675 px (recommended 1600×900 px).",
+  "errors": {
+    "cover": [
+      "The cover image must have a 16:9 aspect ratio and be at least 1200×675 px (recommended 1600×900 px)."
+    ]
+  }
 }
 ```
 
