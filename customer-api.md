@@ -34,6 +34,15 @@ lock. Order draft/confirm, pay-for/release and intent creation wait briefly for
 that session's earlier commands, preventing a fast navigation from overtaking a
 cart change.
 
+The async command path is only used when a queue worker is actually consuming
+the command queue. A running worker refreshes a heartbeat on every poll; if the
+newest heartbeat is stale (no worker draining the queue), these endpoints
+automatically fall back to synchronous processing and return their normal
+`201`/`200` response instead of `202`. This means a stopped or crashed worker
+never causes cart writes to be silently lost. The staleness threshold is
+`CUSTOMER_COMMAND_WORKER_MAX_AGE` seconds (default `15`; set to `0` to disable
+the guard and always queue when the async system is enabled).
+
 Payment intent creation/update/cancel/verify, cash payment requests, order
 confirmation and coverage assignment remain authoritative synchronous database
 operations. They are not acknowledged before their database transaction (and,
