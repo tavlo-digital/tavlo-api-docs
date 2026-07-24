@@ -999,6 +999,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
             "vendor_public_id": "V-ABC123",
             "slug": "buffalo-burger",
             "restaurant_name": "Buffalo Burger",
+            "description": "Authentic smash burgers since 2010.",
             "city": "Vienna",
             "address": "Herrengasse 14",
             "latitude": 48.2092,
@@ -1067,6 +1068,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 
 **Notes:**
 
+- `description` is the restaurant's profile description from vendor settings. `null` if the vendor has not set one.
 - `cuisines` is derived from the restaurant's active menu categories.
 - `price_label` is computed from the average menu item price: `Budget-friendly` (≤€10), `Mid-range` (€10–25), `Fine dining` (€25–50), `Premium` (€50+). `null` if no menu items.
 - `latitude` / `longitude` are the restaurant's coordinates (may be `null` if not set by the vendor).
@@ -1103,6 +1105,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
     "vendor_public_id": "V-ABC123",
     "slug": "buffalo-burger",
     "restaurant_name": "Buffalo Burger",
+    "description": "Authentic smash burgers since 2010.",
     "city": "Maadi",
     "address": "Maadi Street 9, Building 86, next to Al-Ezzabi Pharmacy",
     "latitude": 29.9602,
@@ -1143,6 +1146,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 - `today_hours` shows today's open–close range, or `null` if closed today.
 - `today_hours` and `business_hours` use the vendor's saved time format.
 - `distance_km` is only returned when `latitude` and `longitude` are provided.
+- `description` is the restaurant's profile description from vendor settings. `null` if the vendor has not set one.
 - `cuisines` is derived from the restaurant's active menu categories.
 - `is_favorite` is `true` when the request is authenticated and the customer has favorited this restaurant; `false` otherwise (including for unauthenticated requests). Not shown above — also returned in the response payload.
 
