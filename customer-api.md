@@ -18,6 +18,40 @@ All authenticated endpoints require a Bearer token via Laravel Sanctum.
 Authorization: Bearer {token}
 ```
 
+## Redis Performance Layer
+
+When enabled, customer reads use a versioned Redis response cache. Cache keys
+include route, query string, locale and authenticated customer ID. Successful
+customer/vendor/admin mutations, Stripe webhooks and completed background
+commands advance the cache version. Redis failures fall back to the normal
+database response path.
+
+Cart item add/update/remove and order item share/unshare can use the ordered
+Redis command path. These endpoints return `202` after enqueueing, while the
+existing Pusher notification delivers the authoritative cart or `state_patch`.
+Commands for one table session are sequenced and processed under a session
+lock. Order draft/confirm, pay-for/release and intent creation wait briefly for
+that session's earlier commands, preventing a fast navigation from overtaking a
+cart change.
+
+Payment intent creation/update/cancel/verify, cash payment requests, order
+confirmation and coverage assignment remain authoritative synchronous database
+operations. They are not acknowledged before their database transaction (and,
+where applicable, Stripe operation) succeeds.
+
+Relevant environment variables:
+
+```dotenv
+CUSTOMER_API_CACHE_ENABLED=true
+CUSTOMER_API_CACHE_STORE=redis
+CUSTOMER_API_CACHE_TTL=120
+CUSTOMER_ASYNC_COMMANDS_ENABLED=true
+CUSTOMER_COMMANDS_CONNECTION=redis
+CUSTOMER_COMMANDS_QUEUE=realtime
+CUSTOMER_COMMAND_STATUS_TTL=3600
+CUSTOMER_COMMAND_BARRIER_TIMEOUT_MS=2000
+```
+
 ## Media URLs
 
 All media fields (`logo_url`, `cover_photo_url`, `image_url`, `profile_picture`, review `images`, etc.) are returned as **absolute URLs** pointing at the backend, e.g. `http://localhost:8000/media/vendors/1/logo/abc.png`. Files are publicly accessible — no signed token or auth header is required to load them, so the frontend can use the URL directly in `<img>` tags.
@@ -469,6 +503,13 @@ Customer Pusher messages use event name `.notification.created` and contain the 
 `event`, `message`, and `metadata` values as the persisted notification. During the dual-publish
 rollout, clients deduplicate the Pusher and Supabase copies using `metadata.event_id`. Customer
 state updates do not depend on the notification row being inserted first.
+
+When a waiter creates an order or adds items to an existing unpaid waiter order, every active
+customer at that table receives `order_updated`. Its metadata contains a `participant` with
+`customer_id: null` and `name: "Waiter"`, plus an authoritative `state_patch` containing the full
+changed order and its visible items. The frontend inserts the waiter participant first and then
+applies the patch directly to table history, order detail, and tracking caches. No notification-list,
+orders, or table-history request is made in response to this Pusher event.
 
 ---
 
@@ -1257,6 +1298,7 @@ Returns the public "About" profile for a restaurant — vanity stats, features, 
 - `restaurant_features` is a list of structured feature objects chosen by the vendor. Each entry has:
     - `title` — short label (string, required, max 100)
     - `description` — optional longer explanation (string, max 500, may be `null`)
+- `restaurant_features` titles and descriptions are translatable. When an `Accept-Language` header is present and the vendor has stored translations for that language, the response resolves to the translated values. Missing translations fall back to the English base values.
 - `payment_methods["on-site"]` reflects whether customers can pay staff at the restaurant. `payment_methods.stripe` is `true` only when Stripe is enabled and the vendor's Stripe Connect account is onboarded.
 - `contact` is a partial object — each field is only included when the vendor has marked it as publicly visible:
     - `phone` requires `show_phone_public = true` (default `true`)
@@ -1879,6 +1921,25 @@ Returns all visible open cart items per person at the same table. Draft orders d
 
 **POST** `/api/customer/cart/items`
 
+When `CUSTOMER_ASYNC_COMMANDS_ENABLED=true`, cart add/update/remove and table-order
+share/unshare writes are accepted into the ordered Redis command stream. The
+request is authenticated and structurally validated before this response. The
+frontend keeps its optimistic state until the matching realtime event contains
+`command_status: "completed"`.
+
+```json
+{
+    "message": "Change accepted.",
+    "command_id": "0190f26e-7c87-7def-8e46-111111111111",
+    "sequence": 12,
+    "operation": "cart.add",
+    "status": "accepted"
+}
+```
+
+The legacy synchronous `200`/`201` response remains active whenever the feature
+is disabled or Redis enqueueing is unavailable.
+
 Adds an item to the authenticated customer's cart. If the same `menu_item_id` already exists in the customer's current session, the quantity is incremented instead of creating a duplicate entry.
 
 **Body:**
@@ -2329,6 +2390,39 @@ The exact same patch is included at `metadata.state_patch` in the `order_updated
 
 ---
 
+### 3.18.1 Get Customer Command Status 🔒
+
+**GET** `/api/customer/commands/{command_id}`
+
+Returns the short-lived status of an ordered cart/share command. This is a
+reconnect/recovery endpoint; normal clients reconcile from Pusher metadata and
+do not poll it.
+
+**Authentication:** required (Bearer token). A customer can read only their own
+command IDs.
+
+**Request body:** none.
+
+**Response (200):**
+
+```json
+{
+    "command_id": "0190f26e-7c87-7def-8e46-111111111111",
+    "sequence": 12,
+    "status": "completed",
+    "http_status": 201,
+    "response": { "id": 92 }
+}
+```
+
+**Response (404):**
+
+```json
+{ "message": "Command not found or expired." }
+```
+
+---
+
 ### 3.19 Create Order Confirmed 🔒
 
 **POST** `/api/customer/table/order/confirmed`
@@ -2761,11 +2855,13 @@ Every customer order object returned by table history, account history, restaura
 
 **GET** `/api/customer/orders/{orderPublicId}`
 
-Returns one order detail for the authenticated customer.
+Returns one order detail for the authenticated customer. Access is allowed when the customer placed the order (directly or through their table session) or is assigned as/persisted as the payer. This allows a customer who pays for a tablemate's order to open the post-payment tracking screen without changing account order-history ownership.
 
 **Authentication:** required (Bearer token).
 
 **Payment methods:** `card`, `stripe`, `cash`.
+
+`can_view_receipt` is `true` only when the order is paid and the authenticated customer owns the completed payment. Frontends must hide receipt actions and skip receipt requests when it is `false`.
 
 **Response (200):**
 
@@ -2783,6 +2879,7 @@ Returns one order detail for the authenticated customer.
     "order_type": "dine-in",
     "payment_status": "paid",
     "payment_method": "card",
+    "can_view_receipt": true,
     "tip_amount": 0.0,
     "items": [
         {
@@ -2885,7 +2982,7 @@ Returns one order detail for the authenticated customer.
 
 **GET** `/api/customer/receipts`
 
-Returns every completed payment the authenticated customer made (a "receipt" is one payment — Stripe intent or confirmed cash — that may cover several orders, e.g. their own plus tablemates' orders claimed via pay-for). Only completed payments appear: status `succeeded` or a non-null `paid_at`. Newest first.
+Returns every completed payment the authenticated customer made (a "receipt" is one payment — Stripe intent or confirmed cash — that may cover several orders, e.g. their own plus tablemates' orders claimed via pay-for). Only completed payments appear: status `succeeded` or a non-null `paid_at`. Newest first. Receipt ownership follows the payer: an order placed by the customer but paid by another participant remains in order history but is not included in this customer's receipt list.
 
 **Authentication:** required (Bearer token).
 
@@ -2909,8 +3006,16 @@ Returns every completed payment the authenticated customer made (a "receipt" is 
             "paid_at": "13.07.2026 14:05",
             "orders_count": 2,
             "orders": [
-                { "id": 42, "order_public_id": "ord-aB3xK9pQrS12", "amount": 14.42 },
-                { "id": 43, "order_public_id": "ord-Zt5rM2wNqA34", "amount": 7.21 }
+                {
+                    "id": 42,
+                    "order_public_id": "ord-aB3xK9pQrS12",
+                    "amount": 14.42
+                },
+                {
+                    "id": 43,
+                    "order_public_id": "ord-Zt5rM2wNqA34",
+                    "amount": 7.21
+                }
             ]
         }
     ],
@@ -3022,7 +3127,8 @@ Returns a structured receipt payload for a paid order, including restaurant lega
 
 **Rules:**
 
-- The order must belong to the authenticated customer.
+- The authenticated customer must be the payer of the order. A customer who placed the order but did not pay for it receives 404.
+- Completed `order_payments` ownership is authoritative. Legacy self-paid orders without payment attribution remain accessible to their owner for backward compatibility.
 - The order must have `payment_received = true` — unpaid orders return 422.
 
 **Response (200):**
@@ -3304,17 +3410,17 @@ Successful table-scoped payment mutations include an additive `state_patch`. The
 
 For readability, the route-specific examples below abbreviate the repeated affected rows as empty `upsert` arrays. Successful mutations populate those arrays whenever orders or items changed, as shown in the populated example above.
 
-| Route | `operation` |
-| --- | --- |
-| `POST /payments/pay-for` | `payment.assigned` |
-| `DELETE /payments/pay-for/{orderId}` | `payment.assignment_released` |
-| `POST /payments/request-cash` | `payment.cash_requested` |
-| `POST /payments/create-intent` | `payment.initiated` |
-| `POST /payments/update-intent` | `payment.updated` |
-| `DELETE /payments/intent` | `payment.canceled` |
-| `GET /payments/verify` | `payment.verified`, or `payment.completed` when verification first observes success |
-| successful Stripe webhook notification | `payment.completed` |
-| waiter/vendor cash-confirmation notification | `payment.cash_confirmed` |
+| Route                                        | `operation`                                                                         |
+| -------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `POST /payments/pay-for`                     | `payment.assigned`                                                                  |
+| `DELETE /payments/pay-for/{orderId}`         | `payment.assignment_released`                                                       |
+| `POST /payments/request-cash`                | `payment.cash_requested`                                                            |
+| `POST /payments/create-intent`               | `payment.initiated`                                                                 |
+| `POST /payments/update-intent`               | `payment.updated`                                                                   |
+| `DELETE /payments/intent`                    | `payment.canceled`                                                                  |
+| `GET /payments/verify`                       | `payment.verified`, or `payment.completed` when verification first observes success |
+| successful Stripe webhook notification       | `payment.completed`                                                                 |
+| waiter/vendor cash-confirmation notification | `payment.cash_confirmed`                                                            |
 
 ---
 
@@ -3418,7 +3524,7 @@ When at least one assignment is released, every customer with an active session 
 
 **POST** `/api/customer/payments/request-cash`
 
-Requests a cash payment for the specified order plus every eligible order at the same active table whose `paid_by` is the authenticated customer. Creates an `order_payments` record with status `cash_requested` and notifies all customers at the table plus the waiter staff. The waiter manually confirms cash receipt via `PATCH /api/vendor/orders/{orderId}/confirm-cash`.
+Requests a cash payment for every order payable by the authenticated customer in their active table visit: their own eligible unpaid orders plus any tablemate orders explicitly assigned to them through the pay-for flow. Creates an `order_payments` record with status `cash_requested` and notifies all customers at the table plus the waiter staff. The waiter manually confirms cash receipt via `PATCH /api/vendor/orders/{orderId}/confirm-cash`.
 
 **Authentication:** required (Bearer token).
 
@@ -3426,23 +3532,18 @@ Requests a cash payment for the specified order plus every eligible order at the
 
 ```json
 {
-    "order_id": "ord-aB3xK9pQrS12",
-    "customer_id": 7,
     "notes": "I have a 50€ note, will need change"
 }
 ```
 
-| Field         | Type          | Required | Description                                         |
-| ------------- | ------------- | -------- | --------------------------------------------------- |
-| `order_id`    | string\| int  | Yes      | Numeric`orders.id` or `orders.order_public_id`.     |
-| `customer_id` | integer       | Yes      | Must match the authenticated customer's ID.         |
-| `notes`       | string\| null | No       | Free-text note shown to the waiter (max 500 chars). |
+| Field   | Type          | Required | Description                                         |
+| ------- | ------------- | -------- | --------------------------------------------------- |
+| `notes` | string\| null | No       | Free-text note shown to the waiter (max 500 chars). |
 
 **Backend behavior:**
 
-- Resolves `order_id` by `orders.order_public_id` first, then numeric `orders.id`.
-- Validates that `customer_id` matches the authenticated customer.
-- Validates that the order belongs to or is assigned to the authenticated customer.
+- Resolves the payer from the authenticated token; no `customer_id` is accepted or required.
+- Resolves payable orders from the payer's active table session; no `order_id` is accepted or required.
 - Rejects an owner attempting to pay an order assigned to someone else with HTTP `409`.
 - Includes all confirmed-or-later, unpaid orders assigned to the payer in the same active table visit.
 - Rejects if any session has unsubmitted cart items (HTTP `422`).
@@ -3742,7 +3843,9 @@ When the webhook changes customer-visible order state, the `payment_updated` rea
 
 **GET** `/api/customer/orders/{orderPublicId}/tracking`
 
-Returns the authenticated participant's order tracking payload. This endpoint is scoped to the authenticated customer; the order must belong to the customer directly or through the customer's `table_scan_session`.
+Returns the authenticated participant's order tracking payload. The order must either belong to the customer directly/through the customer's `table_scan_session`, or be assigned to or covered by a payment made by that customer. Therefore both the participant who placed an order and the participant who paid for it may track it.
+
+`can_view_receipt` is `true` only when the order is paid and the authenticated customer owns the completed payment (including legacy self-paid orders). Clients must not request the order receipt or show receipt actions when it is `false`.
 
 **Authentication:** Bearer token with `auth:customer`.
 
@@ -3763,6 +3866,7 @@ Returns the authenticated participant's order tracking payload. This endpoint is
     "payment_method": null,
     "payment_pending": true,
     "payment_received": false,
+    "can_view_receipt": false,
     "items": [
         {
             "cart_item_id": 1,
@@ -3937,7 +4041,7 @@ Returns the authenticated customer's most recent notifications (up to 50) and an
 | ------------------- | ------------------------------------------------------------------------------------------- |
 | `cart_updated`      | Cart item added, updated, or removed by any customer at the table                           |
 | `cart_item_updated` | Individual cart item status changed by vendor (preparing, ready, served)                    |
-| `order_updated`     | Order created, confirmed, ready, served, picked up, or cancelled                            |
+| `order_updated`     | Customer/waiter order created or updated, confirmed, ready, served, picked up, or cancelled |
 | `payment_updated`   | Payment assignment claimed/released, payment initiated/completed, or cash payment confirmed |
 | `participant_added` | New customer joined the table session                                                       |
 | `session_expire`    | Table session closed                                                                        |
@@ -4465,7 +4569,115 @@ The response uses `errors.session_scan_table_id` with one of these messages:
 
 ---
 
-### 8.5 Create Review
+### 8.5 Get Reviewable Sessions for a Vendor
+
+**GET** `/api/customer/reviews/vendor/{vendorPublicId}/reviewable`
+
+**Authentication:** required (`auth:customer`).
+
+**Request body:** none.
+
+Returns the list of table scan sessions at the given vendor that the authenticated customer can still review. A session is included only when:
+
+- The customer has at least one non-cancelled/non-draft order in the session.
+- All active orders are paid (`payment_received = true`).
+- All active orders are served or picked up.
+- No review has been submitted for the session yet.
+
+Each session includes the served items so the client can show what the customer ordered.
+
+**Response (200):**
+
+```json
+{
+    "vendor": {
+        "vendor_public_id": "vnd-aBcDeF",
+        "restaurant_name": "Tavlo Kitchen"
+    },
+    "data": [
+        {
+            "session_scan_table_id": 81,
+            "scanned_at": "2026-07-04 14:30:00",
+            "items": [
+                {
+                    "cart_item_id": 1,
+                    "menu_item_id": 10,
+                    "menu_item_name": "Margherita Pizza",
+                    "menu_item_image": "https://.../pizza.jpg",
+                    "quantity": 2
+                },
+                {
+                    "cart_item_id": 2,
+                    "menu_item_id": 15,
+                    "menu_item_name": "Caesar Salad",
+                    "menu_item_image": "https://.../salad.jpg",
+                    "quantity": 1
+                }
+            ]
+        }
+    ]
+}
+```
+
+Returns an empty `data` array when the customer has no reviewable sessions at the vendor.
+
+**Response (404):** Vendor not found.
+
+---
+
+### 8.6 Get Session Items by Order
+
+**GET** `/api/customer/reviews/order/{orderPublicId}/session`
+
+**Authentication:** required (`auth:customer`).
+
+**Request body:** none.
+
+Given an order ID, returns the parent table scan session and **all** items the customer was served across every order in that session — not just the items from the given order. This lets the client show the full session context for review submission when the entry point is a single order.
+
+Includes review eligibility flags identical to the session detail endpoint.
+
+**Response (200):**
+
+```json
+{
+    "session_scan_table_id": 81,
+    "reviewable": true,
+    "all_paid": true,
+    "all_served": true,
+    "reviewed": false,
+    "items": [
+        {
+            "cart_item_id": 1,
+            "menu_item_id": 10,
+            "menu_item_name": "Margherita Pizza",
+            "menu_item_image": "https://.../pizza.jpg",
+            "quantity": 2
+        },
+        {
+            "cart_item_id": 2,
+            "menu_item_id": 15,
+            "menu_item_name": "Caesar Salad",
+            "menu_item_image": "https://.../salad.jpg",
+            "quantity": 1
+        }
+    ]
+}
+```
+
+Items from all of the customer's orders in that session are included (e.g. if the customer placed two separate orders during the same table session, items from both appear).
+
+**Response (404):** Order not found or does not belong to the authenticated customer.
+
+**Response (422):**
+
+The response uses `errors.order` with one of these messages:
+
+- `This order is not linked to a table session.`
+
+---
+
+### 8.7 Create Review
 
 **POST** `/api/customer/reviews`
 
@@ -4549,33 +4761,98 @@ For multipart clients, send nested fields such as `photos[]`, `items[0][cart_ite
 
 ---
 
-### 8.6 Update Review
+### 8.8 Update Review
 
 **PATCH** `/api/customer/reviews/{reviewPublicId}`
 
-Can update the overall rating/text and optionally update per-item ratings.
+**Authentication:** required (`auth:customer`).
 
-**Body:**
+**Content-Type:** `multipart/form-data`.
+
+Can update the overall rating/text/photos and optionally update per-item ratings/photos. New photos are appended to existing ones; use `remove_photos` / `items[N][remove_photos]` to delete specific photos first (pass the stored path returned in the review's `photos` array).
+
+Each review and each item may have at most **5 photos**. If the combined count (existing − removed + new) exceeds 5, a `422` is returned.
+
+**Conceptual request:**
 
 ```json
 {
     "rating": 4,
     "text": "Updated review text",
+    "photos": ["<image file>"],
+    "remove_photos": ["reviews/rev_abc123/photos/old.jpg"],
     "items": [
         {
             "cart_item_id": 1,
             "rating": 4,
-            "review": "Updated item review"
+            "review": "Updated item review",
+            "photos": ["<image file>"],
+            "remove_photos": ["reviews/rev_abc123/items/1/old.jpg"]
         }
     ]
 }
 ```
 
+**Multipart encoding** — identical to the create endpoint (section 8.7):
+
+| Field pattern | Type | Description |
+|---|---|---|
+| `rating` | integer | Overall rating 1-5. |
+| `text` | string | Overall review text (max 2000 chars). |
+| `photos[]` | file | New overall review photos (jpg/jpeg/png/webp, max 5 MB each). |
+| `remove_photos[]` | string | Stored paths of overall photos to delete. |
+| `items[0][cart_item_id]` | integer | Cart item ID. |
+| `items[0][rating]` | integer | Item rating 1-5. |
+| `items[0][review]` | string | Item review text (max 1000 chars). |
+| `items[0][photos][]` | file | New item photos. |
+| `items[0][remove_photos][]` | string | Stored paths of item photos to delete. |
+
 All fields are optional. If `items` is provided, each item must belong to an order in the review's session and is upserted by `cart_item_id`. Menu item ratings are recalculated.
+
+**Response (200):**
+
+```json
+{
+    "message": "Review updated.",
+    "review": {
+        "review_public_id": "rev_xYz123",
+        "session_scan_table_id": 81,
+        "rating": 4,
+        "text": "Updated review text",
+        "photos": ["https://.../photo_new.jpg"],
+        "vendor": {
+            "vendor_public_id": "vnd-aBcDeF",
+            "restaurant_name": "Tavlo Kitchen"
+        },
+        "items": [
+            {
+                "cart_item_id": 1,
+                "menu_item_id": 10,
+                "menu_item_name": "Margherita Pizza",
+                "menu_item_image": "https://.../pizza.jpg",
+                "rating": 4,
+                "text": "Updated item review",
+                "photos": ["https://.../item_photo.jpg"]
+            }
+        ],
+        "vendor_reply": null,
+        "vendor_replied_at": null,
+        "flagged": false,
+        "created_at": "2026-07-04 19:30:00",
+        "updated_at": "2026-07-04 20:15:00"
+    }
+}
+```
+
+**Response (422):**
+
+- `photos` → `A review may have at most 5 photos.`
+- `items` → `Item {id} may have at most 5 photos.`
+- `items` → `One or more item IDs do not belong to this session.`
 
 ---
 
-### 8.7 Delete Review
+### 8.9 Delete Review
 
 **DELETE** `/api/customer/reviews/{reviewPublicId}`
 

@@ -92,3 +92,11 @@ names. `monthlyEquivalent` is calculated from the saved yearly price divided by
 subscription flow for that plan. Logged-out users are sent to login, can switch
 to registration if needed, and return to the selected subscription after
 authentication.
+
+### Localization
+
+Plan names, descriptions, and feature labels are translatable. Send an
+`Accept-Language` header (e.g. `de`, `ar`, `fr-FR`) and the endpoint resolves
+translations from the `subscription_plan_translations` / `feature_translations`
+tables managed by the admin panel. Missing translations fall back to the English
+base value. The `Accept-Language` header is optional; omitting it returns English.
