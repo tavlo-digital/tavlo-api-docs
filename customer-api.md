@@ -191,6 +191,13 @@ Returns API and database status.
 
 **POST** `/api/customer/register`
 
+Creates a new customer account and **emails a 6-digit OTP** to verify the email
+address. The account is created immediately and a token is returned so the app
+can proceed, but `email_verified_at` stays `null` until the code is confirmed via
+[§1.1.1 Verify Email OTP](#111-verify-email-otp). Email verification uses an OTP
+code — **no verification link is sent**. Login is **not** blocked while an account
+is unverified.
+
 **Body:**
 
 ```json
@@ -216,7 +223,8 @@ Returns API and database status.
         "email": "john@example.com",
         "phone": "+43123456789",
         "account_type": "registered",
-        "registration_source": "email"
+        "registration_source": "email",
+        "email_verified_at": null
     },
     "token": "1|abc123..."
 }
@@ -229,6 +237,98 @@ Returns API and database status.
 - `phone`: required, string, max 30, unique
 - `email`: required, email, max 255, unique
 - `password`: required, string, min 8, confirmed
+
+**Notes:**
+
+- A registration OTP is emailed on success. Codes are 6 digits and expire after
+  10 minutes.
+- Verify the email with [§1.1.1](#111-verify-email-otp) and resend the code with
+  [§1.1.2](#112-resend-email-otp).
+
+---
+
+### 1.1.1 Verify Email OTP
+
+**POST** `/api/customer/register/verify-otp`
+
+Confirms the email address using the 6-digit code sent at registration. On success
+`email_verified_at` is set.
+
+**Body:**
+
+```json
+{
+    "email": "john@example.com",
+    "otp": "123456"
+}
+```
+
+**Validation:**
+
+- `email`: required, email
+- `otp`: required, string (the 6-digit code)
+
+**Response (200):**
+
+```json
+{
+    "message": "Email address verified.",
+    "user": {
+        "id": 1,
+        "email": "john@example.com",
+        "email_verified_at": "2026-07-24T10:15:00+00:00"
+    }
+}
+```
+
+**Response (200) — already verified:**
+
+```json
+{
+    "message": "Email address is already verified.",
+    "user": { "id": 1, "email": "john@example.com" }
+}
+```
+
+**Errors:**
+
+- `422` (`otp`): The code is invalid, expired, or has been used. After 5 wrong
+  attempts the code is burned and a new one must be requested.
+- `422` (`email`): No account found for this email address.
+
+---
+
+### 1.1.2 Resend Email OTP
+
+**POST** `/api/customer/register/resend-otp`
+
+Sends a fresh registration OTP to an unverified account. The response is always the
+same generic message so the endpoint does not reveal whether an email is registered.
+
+**Body:**
+
+```json
+{
+    "email": "john@example.com"
+}
+```
+
+**Validation:**
+
+- `email`: required, email
+
+**Response (200):**
+
+```json
+{
+    "message": "If the account exists and is unverified, a verification code has been sent."
+}
+```
+
+**Errors:**
+
+- `422` (`email`): A new code was requested before the resend cooldown (60 seconds)
+  elapsed — the message states how long to wait.
 
 ---
 
@@ -510,6 +610,128 @@ customer at that table receives `order_updated`. Its metadata contains a `partic
 changed order and its visible items. The frontend inserts the waiter participant first and then
 applies the patch directly to table history, order detail, and tracking caches. No notification-list,
 orders, or table-history request is made in response to this Pusher event.
+
+---
+
+### 1.10 Forgot Password (Send OTP)
+
+**POST** `/api/customer/password/forgot`
+
+Starts the OTP-based password reset flow. If the email belongs to a registered
+(non-guest) account, a **6-digit OTP is emailed** — **no reset link is sent**. The
+response is always the same generic message so the endpoint does not reveal whether
+an email is registered.
+
+**Authentication:** public route; no Bearer token required.
+
+**Body:**
+
+```json
+{
+    "email": "john@example.com"
+}
+```
+
+**Validation:**
+
+- `email`: required, email
+
+**Response (200):**
+
+```json
+{
+    "message": "If an account exists for this email, a reset code has been sent."
+}
+```
+
+**Notes:**
+
+- Codes are 6 digits and expire after 10 minutes.
+- Guest accounts do not receive a reset code.
+- A resend cooldown of 60 seconds applies per email; requesting a new code too soon
+  returns `422` with an `email` error stating how long to wait.
+
+---
+
+### 1.11 Verify Password OTP
+
+**POST** `/api/customer/password/verify-otp`
+
+Optional convenience step: checks a password-reset code **without consuming it**, so
+the client can validate the code on one screen before collecting the new password on
+the next. The same code is still valid for [§1.12 Reset Password](#112-reset-password).
+
+**Authentication:** public route; no Bearer token required.
+
+**Body:**
+
+```json
+{
+    "email": "john@example.com",
+    "otp": "123456"
+}
+```
+
+**Validation:**
+
+- `email`: required, email
+- `otp`: required, string (the 6-digit code)
+
+**Response (200):**
+
+```json
+{
+    "message": "Code verified."
+}
+```
+
+**Errors:**
+
+- `422` (`otp`): The code is invalid, expired, or has been used.
+
+---
+
+### 1.12 Reset Password
+
+**POST** `/api/customer/password/reset`
+
+Completes the reset: verifies the OTP and sets the new password. The code is
+single-use, so it cannot be replayed after a successful reset. All of the customer's
+existing access tokens are revoked, so they must log in again with the new password.
+
+**Authentication:** public route; no Bearer token required.
+
+**Body:**
+
+```json
+{
+    "email": "john@example.com",
+    "otp": "123456",
+    "password": "brand-new-pass",
+    "password_confirmation": "brand-new-pass"
+}
+```
+
+**Validation:**
+
+- `email`: required, email
+- `otp`: required, string (the 6-digit code)
+- `password`: required, string, min 8, confirmed
+
+**Response (200):**
+
+```json
+{
+    "message": "Password has been reset. Please log in with your new password."
+}
+```
+
+**Errors:**
+
+- `422` (`otp`): The code is invalid, expired, or has been used. After 5 wrong
+  attempts the code is burned and a new one must be requested via §1.10.
+- `422` (`email`): No account found for this email address.
+- `422` (`password`): Fails validation (too short, or confirmation mismatch).
 
 ---
 
