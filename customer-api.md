@@ -1073,7 +1073,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 - `price_label` is computed from the average menu item price: `Budget-friendly` (≤€10), `Mid-range` (€10–25), `Fine dining` (€25–50), `Premium` (€50+). `null` if no menu items.
 - `latitude` / `longitude` are the restaurant's coordinates (may be `null` if not set by the vendor).
 - `currency` is derived from the restaurant's selected country via `countries.currency`.
-- `is_open` is computed from `business_hours` for the current day/time. `today_hours` shows today's open–close range, or `null` if closed today.
+- `is_open` is computed from `business_hours` for the current day/time, evaluated in the vendor's timezone. Windows that span midnight (e.g. `18:00`–`02:00`) are handled correctly, including in the early-morning hours after midnight. `today_hours` shows today's open–close range, or `null` if closed today.
 - `business_hours` is a per-day map. Open/close values use the vendor's `24h` or `12h` setting; each day is otherwise shaped as `{ "open": "...", "close": "...", "closed": false }` or `{ "closed": true }`.
 - `distance_km` is only returned when `latitude` and `longitude` are provided in the request.
 - `cuisine` filter matches by menu category ID.
@@ -1142,7 +1142,7 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 
 **Notes:**
 
-- `is_open` is computed from the vendor's `business_hours` for the current day/time.
+- `is_open` is computed from the vendor's `business_hours` for the current day/time, evaluated in the vendor's timezone. Windows that span midnight (e.g. `18:00`–`02:00`) are handled correctly, including in the early-morning hours after midnight.
 - `today_hours` shows today's open–close range, or `null` if closed today.
 - `today_hours` and `business_hours` use the vendor's saved time format.
 - `distance_km` is only returned when `latitude` and `longitude` are provided.
@@ -4453,7 +4453,7 @@ Returns the customer's favorite restaurants.
 **Notes:**
 
 - `avg_rating` is rounded to 1 decimal (0 if no reviews). `review_count` is the total number of reviews.
-- `is_open` is computed from the vendor's `business_hours` for the current day/time.
+- `is_open` is computed from the vendor's `business_hours` for the current day/time, evaluated in the vendor's timezone. Windows that span midnight (e.g. `18:00`–`02:00`) are handled correctly, including in the early-morning hours after midnight.
 - `status` is the human-readable string `"Open"` or `"Closed"`, mirroring `is_open`.
 - `business_hours` is the vendor's configured weekly business-hours map, or `null` if unavailable.
 - Opening and closing values use the vendor's saved time format.
