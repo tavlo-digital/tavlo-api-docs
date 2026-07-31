@@ -3769,13 +3769,15 @@ Requests a cash payment for every order payable by the authenticated customer in
 
 ```json
 {
-    "notes": "I have a 50€ note, will need change"
+    "notes": "I have a 50€ note, will need change",
+    "tip_amount": 5.00
 }
 ```
 
-| Field   | Type          | Required | Description                                         |
-| ------- | ------------- | -------- | --------------------------------------------------- |
-| `notes` | string\| null | No       | Free-text note shown to the waiter (max 500 chars). |
+| Field        | Type           | Required | Description                                                                                              |
+| ------------ | -------------- | -------- | -------------------------------------------------------------------------------------------------------- |
+| `notes`      | string \| null | No       | Free-text note shown to the waiter (max 500 chars).                                                      |
+| `tip_amount` | number \| null | No       | Tip amount (min 0, max 999999.99). Added to the payer's own order. Cannot tip when paying only for others. |
 
 **Backend behavior:**
 
@@ -3786,7 +3788,7 @@ Requests a cash payment for every order payable by the authenticated customer in
 - Rejects if any session has unsubmitted cart items (HTTP `422`).
 - Rejects if total amount is zero or negative (HTTP `422`).
 - Creates one `order_payments` row with `status: 'cash_requested'`, `payment_method: 'cash'`, and `notes` in metadata.
-- Updates each covered order: `payment_method = 'cash'`, `payment_pending = true`.
+- Updates each covered order: `payment_method = 'cash'`, `payment_pending = true`, and sets `tip_amount` on the payer's own order.
 - Sends a `payment_updated` notification to all customers at the table and to waiter/vendor staff.
 - Returns the same `payment.cash_requested` state patch sent to table customers so the initiator can lock the affected orders without reloading history.
 
