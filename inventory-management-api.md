@@ -171,6 +171,56 @@ Ingredient names, supplier names, and category names are localized to the vendor
 
 Returns the created item with status `201`. Quantity, unit, costs, nutrition, and stock rules are shared. Ingredient and supplier names are translated.
 
+### Bulk Import Items
+
+**POST** `/{vendorId}/inventory/items/bulk`
+
+Auth: authenticated `vendor` or authorized vendor team-member token. The authenticated actor must belong to `{vendorId}`.
+
+Creates or updates up to 500 inventory items in one request. Matching is case-insensitive by ingredient name. Optional fields that are omitted are preserved on existing items and use their normal defaults for new items. Named categories are reused or created automatically.
+
+```json
+{
+  "items": [
+    {
+      "ingredientName": "Tomatoes",
+      "unit": "kg",
+      "category": "Vegetables",
+      "currentStock": 25,
+      "reorderLevel": 10,
+      "reorderQuantity": 20,
+      "supplier": "Fresh Foods",
+      "costPerUnit": 2.5
+    }
+  ]
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `items` | array | yes | 1–500 rows |
+| `items.*.ingredientName` | string | yes | Maximum 255 characters; case-insensitive upsert key |
+| `items.*.unit` | string | yes | Maximum 20 characters |
+| `items.*.category` | string/null | no | Maximum 255 characters; auto-created when missing |
+| `items.*.currentStock` | number/null | no | Minimum 0 |
+| `items.*.reorderLevel` | number/null | no | Minimum 0 |
+| `items.*.reorderQuantity` | number/null | no | Minimum 0 |
+| `items.*.supplier` | string/null | no | Maximum 255 characters |
+| `items.*.costPerUnit` | number/null | no | Minimum 0 |
+
+Response `200`:
+
+```json
+{
+  "created": 1,
+  "updated": 0,
+  "skipped": 0,
+  "errors": []
+}
+```
+
+Rows are committed independently. A database failure for one row rolls back that row, records it in `errors`, and does not undo successful rows. Request validation failures return `422` before any row is changed.
+
 ### Update Item
 
 **PATCH** `/{vendorId}/inventory/items/{itemId}`

@@ -1398,6 +1398,7 @@ Returns all public (non-flagged) reviews for a restaurant, with reviewer info an
                 "name": "John D.",
                 "profile_picture": "http://localhost:8000/media/customers/1/avatar/abc123.jpg"
             },
+            "anonymous": false,
             "menu_items": [
                 {
                     "id": 42,
@@ -1458,7 +1459,8 @@ Returns all public (non-flagged) reviews for a restaurant, with reviewer info an
 - `menu_items` is derived from `cart_items` linked to the review's paid order: owned rows where `cart_items.order_id` matches the review order, plus shared rows whose `shared_order_ids` include that order ID. Each entry includes the item `name`, `quantity` ordered, and — when the vendor still has a matching menu item — its `id`, `slug`, and `image_url`. `id`, `name`, `slug`, and `image_url` are `null` if the menu item can no longer be resolved.
 - `item_reviews` contains per-item ratings and review text submitted by the customer. Each entry includes the `menu_item_id`, `menu_item_name`, `menu_item_image`, `rating` (1–5), and optional `text`.
 - `images` is an array of image URLs uploaded by the reviewer (may be empty).
-- `reviewer.name` falls back to `"Anonymous"` if the customer has no name set.
+- `reviewer.name` falls back to `"Anonymous"` if the customer has no name set. When `anonymous` is `true`, a deterministic pseudonym is shown (e.g. "Happy Foodie") and `profile_picture` is `null`.
+- `anonymous` indicates whether the customer chose to post anonymously.
 - `created_at` and `vendor_replied_at` use the vendor's saved date and time formats.
 - `review_summary` is computed across **all** non-flagged reviews for this restaurant — it is independent of the `rating`, `with_images`, and pagination filters, so the breakdown stays stable while the user filters the list.
     - `average_rating` is rounded to 1 decimal (0 if there are no reviews).
@@ -4525,6 +4527,14 @@ Removes the given restaurant from the authenticated customer's favorites.
 
 ## 8. Reviews 🔒
 
+All review endpoints respect the vendor's **Reviews** settings (see §8.6 Eligibility):
+
+| Setting | Effect |
+|---------|--------|
+| `enableReviews` | When `false`, sessions are never marked `reviewable` and the create-review endpoint returns `403`. |
+| `enableMenuReviews` | When `false`, the `items` array in create/update is optional — only an overall rating is required. |
+| `allowAnonymousReviews` | When `true`, customers may set `anonymous: true` on create/update. Anonymous reviews display a deterministic pseudonym (e.g. "Happy Foodie") instead of the real name. |
+
 ### 8.1 List Reviews
 
 **GET** `/api/customer/reviews`
@@ -4565,6 +4575,7 @@ Review `created_at`, `updated_at`, and `vendor_replied_at` fields use each revie
             ],
             "vendor_reply": null,
             "vendor_replied_at": null,
+            "anonymous": false,
             "flagged": false,
             "created_at": "06/21/2026 2:30 PM",
             "updated_at": "06/21/2026 2:30 PM"
@@ -4605,6 +4616,7 @@ Returns only the item-level review entries for the requested menu item. The pare
                 "name": "Jane Customer",
                 "profile_picture": null
             },
+            "anonymous": false,
             "created_at": "06/21/2026 2:30 PM",
             "updated_at": "06/21/2026 2:30 PM"
         }
@@ -4640,7 +4652,7 @@ Returns only the item-level review entries for the requested menu item. The pare
 
 **Request body:** none.
 
-Returns all table scan sessions for the authenticated customer that have at least one order, along with review eligibility flags and full review details when a review exists. Sessions with no orders are excluded.
+Returns all table scan sessions for the authenticated customer that have at least one order, along with review eligibility flags and full review details when a review exists. Sessions with no orders are excluded. The `reviewable` flag is `false` when the vendor's `enableReviews` setting is disabled.
 
 **Response (200):**
 
@@ -4683,6 +4695,7 @@ Returns all table scan sessions for the authenticated customer that have at leas
                 ],
                 "vendor_reply": null,
                 "vendor_replied_at": null,
+                "anonymous": false,
                 "flagged": false,
                 "created_at": "2026-07-04 19:30:00",
                 "updated_at": "2026-07-04 19:30:00"
@@ -4725,7 +4738,7 @@ Returns every order and cart item for the table scan session, along with review 
 | Field        | Type    | Description                                                                                                                   |
 | ------------ | ------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `reviewed`   | boolean | `true` if a review has already been submitted for this session.                                                               |
-| `reviewable` | boolean | `true` only when all orders are paid, all items are served, **and** no review exists yet. `false` if a review already exists. |
+| `reviewable` | boolean | `true` only when the vendor's `enableReviews` is on, all orders are paid, all items are served, **and** no review exists yet. `false` otherwise. |
 | `all_paid`   | boolean | `true` if every order in the session has `payment_received = true`.                                                           |
 | `all_served` | boolean | `true` if every cart item (including shared items) has `served_at` set.                                                       |
 
@@ -4787,6 +4800,7 @@ Returns every order and cart item for the table scan session, along with review 
         ],
         "vendor_reply": null,
         "vendor_replied_at": null,
+        "anonymous": false,
         "flagged": false,
         "created_at": "2026-07-04 19:30:00",
         "updated_at": "2026-07-04 19:30:00"
@@ -4812,7 +4826,7 @@ The response uses `errors.session_scan_table_id` with one of these messages:
 
 **Request body:** none.
 
-Returns the list of table scan sessions at the given vendor that the authenticated customer can still review. A session is included only when:
+Returns the list of table scan sessions at the given vendor that the authenticated customer can still review. Returns an empty `data` array immediately when the vendor's `enableReviews` setting is disabled. Otherwise, a session is included only when:
 
 - The customer has at least one non-cancelled/non-draft order in the session.
 - All active orders are paid (`payment_received = true`).
@@ -4900,7 +4914,7 @@ Reports which kinds of reviews the vendor currently allows, based on the vendor'
 
 Given an order ID, returns the parent table scan session and **all** items the customer was served across every order in that session — not just the items from the given order. This lets the client show the full session context for review submission when the entry point is a single order.
 
-Includes review eligibility flags identical to the session detail endpoint.
+Includes review eligibility flags identical to the session detail endpoint. The `reviewable` flag is `false` when the vendor's `enableReviews` setting is disabled.
 
 **Response (200):**
 
@@ -4950,7 +4964,7 @@ The response uses `errors.order` with one of these messages:
 
 **Content-Type:** `multipart/form-data`.
 
-Reviews are per table scan session. The customer provides one overall session review and can rate cart items from any paid order in that session.
+Reviews are per table scan session. The customer provides one overall session review and can optionally rate cart items from any paid order in that session.
 
 **Conceptual request:**
 
@@ -4959,6 +4973,7 @@ Reviews are per table scan session. The customer provides one overall session re
     "session_scan_table_id": 81,
     "rating": 5,
     "review": "Amazing food and service!",
+    "anonymous": false,
     "photos": ["<image file>"],
     "items": [
         {
@@ -4979,14 +4994,16 @@ For multipart clients, send nested fields such as `photos[]`, `items[0][cart_ite
 - `rating`: required, integer, 1–5 (overall session rating)
 - `review`: nullable, string, max 2000
 - `photos`: nullable, maximum 5 JPG, JPEG, PNG, or WebP files; maximum 5 MB each
-- `items`: required, array, min 1 item
-- `items.*.cart_item_id`: required, distinct integer, must belong to an order in the session
-- `items.*.rating`: required, integer, 1–5
+- `anonymous`: optional, boolean — only honoured when the vendor's `allowAnonymousReviews` is `true`; ignored otherwise
+- `items`: **required** when the vendor's `enableMenuReviews` is `true`; **optional** (nullable array) when it is `false`
+- `items.*.cart_item_id`: required (when items provided), distinct integer, must belong to an order in the session
+- `items.*.rating`: required (when items provided), integer, 1–5
 - `items.*.review`: nullable, string, max 1000
 - `items.*.photos`: nullable, maximum 5 JPG, JPEG, PNG, or WebP files per item; maximum 5 MB each
 
 **Eligibility:**
 
+- The vendor's `enableReviews` setting must be `true`; otherwise a `403` is returned.
 - The same session-wide checks described in §8.2 are performed again when the review is submitted.
 - Only one review can be created per table scan session.
 
@@ -5019,10 +5036,13 @@ For multipart clients, send nested fields such as `photos[]`, `items[0][cart_ite
                     "http://localhost:8000/media/reviews/rev_abc123/items/1/pizza.jpg"
                 ]
             }
-        ]
+        ],
+        "anonymous": false
     }
 }
 ```
+
+**Response (403):** `{ "message": "Reviews are disabled for this restaurant." }` — the vendor's `enableReviews` setting is `false`.
 
 ---
 
@@ -5044,6 +5064,7 @@ Each review and each item may have at most **5 photos**. If the combined count (
 {
     "rating": 4,
     "text": "Updated review text",
+    "anonymous": true,
     "photos": ["<image file>"],
     "remove_photos": ["reviews/rev_abc123/photos/old.jpg"],
     "items": [
@@ -5058,12 +5079,13 @@ Each review and each item may have at most **5 photos**. If the combined count (
 }
 ```
 
-**Multipart encoding** — identical to the create endpoint (section 8.7):
+**Multipart encoding** — identical to the create endpoint (section 8.8):
 
 | Field pattern | Type | Description |
 |---|---|---|
 | `rating` | integer | Overall rating 1-5. |
 | `text` | string | Overall review text (max 2000 chars). |
+| `anonymous` | boolean | Whether to post anonymously (only honoured when `allowAnonymousReviews` is on). |
 | `photos[]` | file | New overall review photos (jpg/jpeg/png/webp, max 5 MB each). |
 | `remove_photos[]` | string | Stored paths of overall photos to delete. |
 | `items[0][cart_item_id]` | integer | Cart item ID. |
@@ -5102,6 +5124,7 @@ All fields are optional. If `items` is provided, each item must belong to an ord
         ],
         "vendor_reply": null,
         "vendor_replied_at": null,
+        "anonymous": true,
         "flagged": false,
         "created_at": "2026-07-04 19:30:00",
         "updated_at": "2026-07-04 20:15:00"

@@ -1,10 +1,11 @@
 # QR & Table Management API — Documentation
 
 **Base URL:** `/api/vendor`  
-**Authentication:** `Authorization: Bearer {token}` (vendor token via Sanctum)  
+**Authentication:** `Authorization: Bearer {token}` (vendor owner or active team member via Sanctum)  
 **Content-Type:** `application/json`
 
-Authenticated endpoints require a valid vendor token obtained via `POST /api/vendor/login`.  
+Authenticated endpoints require a valid vendor-owner or team-member token obtained via
+`POST /api/vendor/login`. TeamMember access remains restricted by role.  
 Endpoints marked **Public** do not require authentication — they are called by the customer-facing QR scan page.
 
 ---
@@ -20,6 +21,97 @@ Endpoints marked **Public** do not require authentication — they are called by
 7. [Close Active Table Sessions](#7-close-active-table-sessions)
 8. [Table Status Logic](#8-table-status-logic)
 9. [Error Reference](#9-error-reference)
+10. [Redis-first Waiter Commands](#redis-first-waiter-commands)
+
+---
+
+## Redis-first Waiter Commands
+
+Table mutations have different response contracts for the two authenticated model types:
+
+| Actor | Execution and response |
+|---|---|
+| Vendor owner (`Vendor`) | Executes synchronously and receives the domain response documented by each endpoint (`200`, `201`, `404`, `409`, or `422`). No idempotency header is required. |
+| Active waiter (`TeamMember`) | Reserves an ordered Redis command and receives `202 Accepted`. The database mutation happens later on the `staffcommands` worker. |
+
+The waiter command path covers:
+
+| Endpoint | Command operation | Ordered resources |
+|---|---|---|
+| `POST /api/vendor/{vendorId}/tables/{tableId}/close-session` | `table.close` | Source table |
+| `POST /api/vendor/{vendorId}/tables/{tableId}/dismiss-call` | `table.dismiss_call` | Source table |
+| `POST /api/vendor/{vendorId}/tables/{tableId}/transfer` | `table.transfer` | Source and target tables |
+| `POST /api/vendor/{vendorId}/tables/{tableId}/session` | `table.create_session` | Table |
+| `POST /api/vendor/{vendorId}/tables/{tableId}/staff-order` | `table.staff_order` | Table |
+
+Every waiter request above must include an actor-scoped UUID:
+
+```http
+Idempotency-Key: 0190f26e-7c87-7def-8e46-400000000021
+```
+
+**Response `202 Accepted`:**
+
+```json
+{
+  "command_id": "0190f26e-7c87-7def-8e46-300000000021",
+  "idempotency_key": "0190f26e-7c87-7def-8e46-400000000021",
+  "operation": "table.close",
+  "status": "accepted",
+  "status_url": "/api/vendor/commands/0190f26e-7c87-7def-8e46-300000000021"
+}
+```
+
+`202` confirms reservation/enqueueing only. Poll **GET**
+`/api/vendor/commands/{commandId}` with the same TeamMember token. The vendor owner receives `403`
+on this polling route, and a different staff actor receives `404`. A terminal result has
+`status: "completed"` or `status: "failed"` and includes the original controller result in
+`http_status`, `response`, `error`, and `processed_at`. For example, an accepted close can later
+finish as:
+
+```json
+{
+  "command_id": "0190f26e-7c87-7def-8e46-300000000021",
+  "idempotency_key": "0190f26e-7c87-7def-8e46-400000000021",
+  "team_member_id": 19,
+  "vendor_id": 7,
+  "actor_role": "waiter",
+  "operation": "table.close",
+  "status": "failed",
+  "resources": ["vendor:7:table:12"],
+  "resource_sequences": { "vendor:7:table:12": 34 },
+  "http_status": 409,
+  "response": {
+    "message": "This table still has unpaid balances.",
+    "code": "unpaid_balance",
+    "paymentSummary": {
+      "totalAmount": 46,
+      "paidAmount": 20,
+      "remainingAmount": 26,
+      "cashPendingOrders": 1,
+      "ordersCount": 2
+    }
+  },
+  "error": "This table still has unpaid balances.",
+  "processed_at": "2026-07-17T12:00:02.000000Z"
+}
+```
+
+The waiter also receives a targeted silent `.notification.created` event with
+`event: "staff_command_completed"` or `event: "staff_command_failed"`; use its
+`metadata.command_id` to reconcile the status URL. The event is read/silent and does not increment
+the visible notification count.
+
+Idempotent retries with the same key and canonical request return the existing command. Reusing the
+same waiter's key for different input returns `409` with `code: "idempotency_key_reused"`. Redis
+assigns per-table sequence numbers atomically, so rapid taps against one table execute in reservation
+order; unrelated tables can run in parallel. A transfer participates in both tables' sequences, so
+it cannot race past another accepted mutation on either table. If Redis/queue dispatch is
+unavailable, the API returns `503` with `code: "staff_commands_unavailable"` and does not execute a
+synchronous fallback.
+
+See `orders-management-api.md` for the full command status schema, notification-read commands, and
+batch order-item status API.
 
 ---
 

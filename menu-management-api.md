@@ -549,6 +549,81 @@ Content-Type: application/json
 
 ---
 
+### POST `/api/vendor/menu/items/bulk`
+
+Creates or updates up to 500 menu items from a vendor-side CSV/XLSX import. Authentication is required. Existing active items are matched case-insensitively by `name` within the resolved vendor category. Each row is committed independently, so an invalid row does not roll back successful rows.
+
+Updates use the same versioning rules as `PATCH /api/vendor/menu/items/{itemId}`. Price, tax, or discount changes therefore create a new item version and preserve historical orders. Optional fields omitted from an existing row remain unchanged.
+
+**Request:**
+```http
+POST /api/vendor/menu/items/bulk
+Authorization: Bearer {token}
+Content-Type: application/json
+```
+
+**Body:**
+```json
+{
+  "items": [
+    {
+      "name": "Margherita Pizza",
+      "category": "Main Courses",
+      "price": 12.5,
+      "description": "Tomato, mozzarella, and basil",
+      "available": true,
+      "calories": 720,
+      "fat": 20,
+      "carbs": 90,
+      "protein": 28,
+      "taxCategory": "food",
+      "dietaryPreference": "vegetarian",
+      "allergies": ["gluten", "dairy"],
+      "specialTags": ["popular"],
+      "discountPercent": 10
+    }
+  ]
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `items` | array | **Yes** | 1-500 menu item rows |
+| `items[].name` | string | **Yes** | Item name, max 255 characters |
+| `items[].category` | string | **Yes** | Existing vendor category name; matching is case-insensitive and includes localized category names |
+| `items[].price` | number | **Yes** | Net item price, minimum 0 |
+| `items[].description` | string | No | Description, max 5000 characters |
+| `items[].available` | boolean | No | Availability; omitted values stay unchanged on update and default to true on create |
+| `items[].calories` | integer | No | Non-negative calorie count |
+| `items[].fat` | number | No | Non-negative grams |
+| `items[].carbs` | number | No | Non-negative grams |
+| `items[].protein` | number | No | Non-negative grams |
+| `items[].taxCategory` | string | No | Tax category slug |
+| `items[].dietaryPreference` | string\|null | No | Active dietary preference slug |
+| `items[].allergies` | string[] | No | Allergen keys |
+| `items[].specialTags` | string[] | No | Special-tag slugs |
+| `items[].discountPercent` | number | No | 0-100; values above 0 enable the discount and 0 disables it |
+
+**Response `200`:**
+```json
+{
+  "created": 1,
+  "updated": 1,
+  "skipped": 1,
+  "errors": [
+    {
+      "row": 4,
+      "name": "Tomato Soup",
+      "message": "Category \"Soups\" does not exist."
+    }
+  ]
+}
+```
+
+`row` is the one-based spreadsheet row number including the header row. Invalid item rows are reported and skipped independently. A request containing more than 500 items, or malformed top-level input, returns `422` validation errors.
+
+---
+
 ### PATCH `/api/vendor/menu/items/{itemId}`
 
 Updates an existing menu item (all fields optional).
