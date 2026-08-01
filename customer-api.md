@@ -3238,7 +3238,18 @@ Returns every completed payment the authenticated customer made (a "receipt" is 
             },
             "amount": 21.63,
             "currency": "EUR",
-            "payment_method": "stripe",
+            "payment_provider": "stripe",
+            "payment_method": "apple_pay",
+            "payment_method_details": {
+                "provider": "stripe",
+                "method": "apple_pay",
+                "type": "card",
+                "display_name": "Apple Pay",
+                "card_brand": "mastercard",
+                "card_last4": "6537",
+                "masked_card": "**** **** **** 6537",
+                "wallet_type": "apple_pay"
+            },
             "status": "succeeded",
             "paid_at": "13.07.2026 14:05",
             "orders_count": 2,
@@ -3260,7 +3271,7 @@ Returns every completed payment the authenticated customer made (a "receipt" is 
 }
 ```
 
-`payment_method` is `stripe` when the payment has a PaymentIntent, otherwise `cash`. `orders[].amount` is each order's share of the payment.
+`payment_provider` identifies the processor (`stripe`) or an offline method (`cash`). `payment_method` is the exact method used: a wallet such as `apple_pay` or `google_pay`, a card brand such as `visa` or `mastercard`, or another Stripe type such as `paypal`, `link`, or `klarna`. `payment_method_details.display_name` is the UI label. Card data is limited to the non-sensitive brand and last four digits; `masked_card` is safe to display. Cash returns `method: "cash"` and null card/wallet fields. `orders[].amount` is each order's share of the payment.
 
 ---
 
@@ -3325,7 +3336,18 @@ Returns a structured receipt for one completed payment in the same format as the
             "amount_charged": 23.63
         },
         "payment": {
-            "method": "stripe",
+            "provider": "stripe",
+            "method": "apple_pay",
+            "method_details": {
+                "provider": "stripe",
+                "method": "apple_pay",
+                "type": "card",
+                "display_name": "Apple Pay",
+                "card_brand": "mastercard",
+                "card_last4": "6537",
+                "masked_card": "**** **** **** 6537",
+                "wallet_type": "apple_pay"
+            },
             "status": "CONFIRMED",
             "transaction_id": "pi_3Nxxx",
             "paid_at": "13.07.2026 14:05"
@@ -3468,7 +3490,18 @@ Returns a structured receipt payload for a paid order, including restaurant lega
             "grand_total": 30.47
         },
         "payment": {
-            "method": "stripe",
+            "provider": "stripe",
+            "method": "visa",
+            "method_details": {
+                "provider": "stripe",
+                "method": "visa",
+                "type": "card",
+                "display_name": "Visa",
+                "card_brand": "visa",
+                "card_last4": "6537",
+                "masked_card": "**** **** **** 6537",
+                "wallet_type": null
+            },
             "status": "CONFIRMED",
             "transaction_id": "pi_123456789",
             "paid_at": "05.06.2026 19:43"

@@ -34,6 +34,7 @@ Authenticated endpoints require a token obtained via `POST /api/vendor/login`. V
 18. [Start Table Session (Staff)](#18-start-table-session-staff)
 19. [Place Staff Order](#19-place-staff-order)
 20. [Order History (Paginated)](#20-order-history-paginated)
+21. [Order Receipt](#21-order-receipt)
 
 ---
 
@@ -792,7 +793,19 @@ This legacy endpoint sets `status → closed` and records `closedAt` on the requ
   "serviceFee": 1.50,
   "vatAmount": 2.00,
   "currency": "EUR",
-  "paymentMethod": "cash",
+  "paymentMethod": "stripe",
+  "paymentProvider": "stripe",
+  "paymentMethodLabel": "Apple Pay",
+  "paymentMethodDetails": {
+    "provider": "stripe",
+    "method": "apple_pay",
+    "type": "card",
+    "displayName": "Apple Pay",
+    "cardBrand": "mastercard",
+    "cardLast4": "6537",
+    "maskedCard": "**** **** **** 6537",
+    "walletType": "apple_pay"
+  },
   "paymentPending": false,
   "paymentReceived": true,
   "paymentConfirmedAt": "2026-03-29T12:10:00.000Z",
@@ -815,6 +828,7 @@ This legacy endpoint sets `status → closed` and records `closedAt` on the requ
 - Item `status` is derived from `served_at`, `ready_at`, and `preparing_start_at`: `served`, `ready`, `in_progress`, or `new`.
 - `readyAt` reflects the order-level rollup (latest timestamp once *all* linked cart_items have `ready_at` set). The per-item `readyAt` is the canonical value.
 - `pickedUpAt` and `guestCount` are no longer returned — both columns were dropped from `orders`.
+- `paymentMethod` remains the order-level payment category used by operational logic. Use `paymentMethodDetails` or `paymentMethodLabel` for the exact Stripe wallet, card brand, and safe masked card number.
 
 ### Table Scan Session Group Object
 
@@ -1321,6 +1335,8 @@ Returns a paginated list of all non-draft orders for the vendor, sorted newest f
 | `orderType` | string | — | Filter by order type (`dine-in`, `takeaway`) |
 | `payment` | string | — | Filter by payment state (`paid`, `unpaid`, `pending-cash`) |
 | `search` | string | — | Search by order number or public ID |
+| `dateFrom` | string (`dd.mm.yyyy`) | — | Include orders created on or after this calendar date in the vendor's timezone |
+| `dateTo` | string (`dd.mm.yyyy`) | — | Include orders through the end of this calendar date in the vendor's timezone |
 
 **Response `200`:**
 
@@ -1337,3 +1353,47 @@ Returns a paginated list of all non-draft orders for the vendor, sorted newest f
   }
 }
 ```
+
+If both dates are supplied, `dateTo` must be the same as or later than `dateFrom`; malformed or reversed ranges return `422` validation errors.
+
+---
+
+## 21. Order Receipt
+
+### `GET /api/vendor/{vendorId}/orders/{orderId}/receipt`
+
+Returns the structured receipt for a paid order. `{orderId}` accepts the numeric order ID or public ID. A payment that covered several orders returns all covered orders in the receipt.
+
+**Auth:** `Bearer {vendorToken}` or an authorized team member token
+
+**Request body:** none
+
+The payment block reports the exact Stripe method and only safe card data:
+
+```json
+{
+  "data": {
+    "payment": {
+      "provider": "stripe",
+      "method": "google_pay",
+      "method_details": {
+        "provider": "stripe",
+        "method": "google_pay",
+        "type": "card",
+        "display_name": "Google Pay",
+        "card_brand": "visa",
+        "card_last4": "6537",
+        "masked_card": "**** **** **** 6537",
+        "wallet_type": "google_pay"
+      },
+      "status": "CONFIRMED",
+      "transaction_id": "pi_3Nxxx",
+      "paid_at": "13.07.2026 14:05"
+    }
+  }
+}
+```
+
+For cash, `provider`, `method`, and `method_details.method` are `cash`, while card and wallet fields are null. Other Stripe methods use Stripe's method type and a human-readable `display_name`.
+
+**Errors:** `404` for an unknown/vendor-mismatched order; `422` when the order is not paid.
