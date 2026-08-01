@@ -2934,7 +2934,7 @@ For a given order `O` in `people[].orders[]`, an item appears in its `items[]` i
 
 **GET** `/api/customer/orders/history`
 
-Returns the authenticated customer's account-level order history grouped by restaurant. Unlike [§4.1](#41-get-current-table-history), this endpoint is not scoped to the currently active table session; it is for the customer's full past order history.
+Returns the authenticated customer's account-level order history grouped by dine-in session. Unlike [§4.1](#41-get-current-table-history), this endpoint is not scoped to the currently active table session; it returns one entry for every past session owned by the customer. Separate sessions at the same restaurant remain separate entries so clients can perform any restaurant-level grouping themselves.
 
 Every customer order object returned by table history, account history, restaurant-specific history, order detail, tracking, and receipts includes the payer identity below. It is `null` unless another customer claimed the order:
 
@@ -2951,12 +2951,14 @@ Every customer order object returned by table history, account history, restaura
 
 **Query Parameters:**
 
-| Param      | Type | Description                                            |
-| ---------- | ---- | ------------------------------------------------------ |
-| `page`     | int  | Orders page number (default:`1`).                      |
-| `per_page` | int  | Orders per restaurant group (default:`10`, max: `50`). |
+| Param      | Type | Description                                      |
+| ---------- | ---- | ------------------------------------------------ |
+| `page`     | int  | Session page number (default: `1`).              |
+| `per_page` | int  | Sessions per page (default: `10`, max: `50`).    |
 
-**Pagination:** `history[].orders` is paginated per restaurant group. The top-level summary always reflects the full matching history, not only the current page.
+**Pagination:** pagination applies to the top-level `history` session entries. Every returned session contains all of its non-draft orders.
+
+`session_id` is the dine-in session identifier to use when creating or uploading a session review. `reviewed` is `true` only when a review exists for both the authenticated customer and that session. `total_spent`, `last_ordered_at`, `orders_count`, and `orders` are calculated independently for each session and never include another visit to the same restaurant.
 
 **Response (200):**
 
@@ -2964,13 +2966,15 @@ Every customer order object returned by table history, account history, restaura
 {
     "history": [
         {
+            "session_id": "56",
             "restaurant_public_id": "REST-101",
             "restaurant_name": "Bella Italia",
             "restaurant_logo_url": "https://example.com/media/vendors/1/logo.png",
             "currency": "USD",
-            "orders_count": 10,
-            "total_spent": 240.0,
+            "orders_count": 1,
+            "total_spent": 24.24,
             "last_ordered_at": "10.10.2024 10:30",
+            "reviewed": false,
             "orders": [
                 {
                     "order_id": "ORD-8801",
@@ -3062,20 +3066,15 @@ Every customer order object returned by table history, account history, restaura
                         "grand_total": 27.46
                     }
                 }
-            ],
-            "pagination": {
-                "current_page": 1,
-                "per_page": 10,
-                "total": 10,
-                "last_page": 1,
-                "has_more": false
-            }
+            ]
         }
     ],
-    "summary": {
-        "restaurants_count": 1,
-        "orders_count": 10,
-        "total_spent": 240.0
+    "pagination": {
+        "current_page": 1,
+        "per_page": 10,
+        "total": 1,
+        "last_page": 1,
+        "has_more": false
     }
 }
 ```
