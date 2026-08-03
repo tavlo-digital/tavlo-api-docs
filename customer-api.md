@@ -2958,7 +2958,7 @@ Every customer order object returned by table history, account history, restaura
 
 **Pagination:** pagination applies to the top-level `history` session entries. Every returned session contains all of its non-draft orders.
 
-`session_id` is the dine-in session identifier to use when creating or uploading a session review. `reviewed` is `true` only when a review exists for both the authenticated customer and that session. `total_spent`, `last_ordered_at`, `orders_count`, and `orders` are calculated independently for each session and never include another visit to the same restaurant.
+`session_id` is the dine-in session identifier to use when creating or uploading a session review. `reviewed` is `true` only when a review exists for both the authenticated customer and that session. `table` identifies the restaurant table for the session and is `null` if that table no longer exists. `total_spent`, `last_ordered_at`, `orders_count`, and `orders` are calculated independently for each session and never include another visit to the same restaurant.
 
 **Response (200):**
 
@@ -2975,6 +2975,11 @@ Every customer order object returned by table history, account history, restaura
             "total_spent": 24.24,
             "last_ordered_at": "10.10.2024 10:30",
             "reviewed": false,
+            "table": {
+                "id": "5",
+                "number": 3,
+                "name": "T3"
+            },
             "orders": [
                 {
                     "order_id": "ORD-8801",
