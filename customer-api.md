@@ -5272,3 +5272,120 @@ All endpoints return standard JSON error responses:
     }
 }
 ```
+
+---
+
+## Pickup Endpoints
+
+Pickup endpoints manage the takeaway/pickup order flow. All authenticated pickup endpoints require the `X-Order-Mode: pickup` header to disambiguate from dine-in sessions.
+
+### Token Status (Public)
+
+Check if a takeaway QR token is valid and get vendor info.
+
+**GET** `/api/customer/pickup/status?token={token}`
+
+**Auth:** None (public)
+
+**Response (200):**
+
+```json
+{
+    "vendor": {
+        "id": 1,
+        "name": "Restaurant Name",
+        "slug": "restaurant-slug"
+    },
+    "type": "takeaway"
+}
+```
+
+### Scan (Create Pickup Session)
+
+Scan a takeaway QR token to start a pickup session. Returns the existing active session if one already exists for this vendor+customer.
+
+**POST** `/api/customer/pickup/scan`
+
+**Auth:** `auth:customer`
+
+**Headers:** `X-Order-Mode: pickup`
+
+**Request Body:**
+
+```json
+{
+    "token": "takeaway-qr-token-string"
+}
+```
+
+**Response (200):**
+
+```json
+{
+    "session": { ... },
+    "vendor": {
+        "id": 1,
+        "name": "Restaurant Name",
+        "slug": "restaurant-slug",
+        "logo_url": "https://...",
+        "currency": "EUR"
+    },
+    "requiresPin": false,
+    "pin": ""
+}
+```
+
+### Session Status
+
+Check if the authenticated customer has an active pickup session.
+
+**GET** `/api/customer/pickup/session/status`
+
+**Auth:** `auth:customer`
+
+**Headers:** `X-Order-Mode: pickup`
+
+**Response (200):**
+
+```json
+{
+    "active": true,
+    "session": { ... }
+}
+```
+
+### Close Session
+
+Close the pickup session. Fails if there are unpaid orders.
+
+**POST** `/api/customer/pickup/close`
+
+**Auth:** `auth:customer`
+
+**Headers:** `X-Order-Mode: pickup`
+
+**Response (200):**
+
+```json
+{
+    "message": "Session closed."
+}
+```
+
+### Using Existing Endpoints with Pickup
+
+The following existing endpoints support pickup when the `X-Order-Mode: pickup` header is set:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/customer/cart` | GET | Get cart items for active pickup session |
+| `/api/customer/cart/items` | POST | Add item to pickup cart |
+| `/api/customer/cart/items/{id}` | PATCH | Update pickup cart item |
+| `/api/customer/cart/items/{id}` | DELETE | Remove pickup cart item |
+| `/api/customer/table/order/draft` | POST | Create draft pickup order (order_type: 'takeaway') |
+| `/api/customer/table/order/confirmed` | POST | Confirm pickup order |
+| `/api/customer/table/history` | GET | Get pickup order history |
+| `/api/customer/orders/{id}/tracking` | GET | Track pickup order |
+| `/api/customer/payments/create-intent` | POST | Create Stripe payment intent for pickup |
+| `/api/customer/payments/verify` | GET | Verify pickup payment |
+| `/api/customer/orders/{id}/receipt` | GET | Get pickup order receipt |
