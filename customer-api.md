@@ -2431,7 +2431,7 @@ Returns a payment-ready snapshot of the authenticated customer's current table:
 
 **POST** `/api/customer/table/order/draft`
 
-Creates a `draft` order for the authenticated customer's active table session. The amount is computed from the customer's currently open owned `cart_items` (`order_id = null`) plus any selected shared items. If the customer already has an unpaid draft for this active session, the draft amount is refreshed instead of creating another draft. If the customer already has an unpaid, non-cancelled submitted order for this active session, this endpoint returns the table view without creating a new draft; added open items are bound to that existing order only when confirm is called again.
+Creates a `draft` order for the authenticated customer's active order session. The amount is computed from the customer's currently open owned `cart_items` (`order_id = null`) plus any selected shared items. If the customer already has an unpaid draft for this active session, the draft amount is refreshed instead of creating another draft. If the customer already has an unpaid, non-cancelled submitted order for this active session, this endpoint returns the group view without creating a new draft; added open items are bound to that existing order only when confirm is called again. Pickup/takeaway clients send the mode header and intentionally leave this order as a draft until payment succeeds.
 
 **Authentication:** required (Bearer token).
 
@@ -2664,6 +2664,8 @@ command IDs.
 
 **POST** `/api/customer/table/order/confirmed`
 
+> **Dine-in only:** Pickup and takeaway clients must not call this route. They create a draft and let successful card payment or vendor/waiter cash confirmation confirm it; see [§10.2](#102-lifecycle-and-payment-gate).
+
 Confirms the authenticated customer's open order for the active table session. **No request body is accepted.** The endpoint recomputes the final `amount`, updates a draft order to `status = "confirmed"`, and binds currently open owned cart rows by setting `cart_items.order_id`.
 
 If no draft or submitted order exists, the endpoint **auto-creates a draft order** from the customer's open cart items and immediately confirms it — callers do not need to call the draft endpoint first.
@@ -2713,13 +2715,13 @@ The final amount is rounded to 2 decimals.
 
 **GET** `/api/customer/table/history`
 
-Returns the unified table-view payload — table + vendor + session metadata, every active session at the same table, and every order each person has placed in their active table session. Draft orders show the customer's currently open cart rows; confirmed-or-later orders show rows bound through `cart_items.order_id` plus shared rows from `shared_order_ids`. Each person returns `orders` as an array containing all matching orders for that same `session_id`; it is an empty array when no order exists.
+Returns the unified group-view payload — target + vendor + session metadata, every participant in the active group, and every order each person has placed in their active session. Draft orders show the customer's currently open cart rows; confirmed-or-later orders show rows bound through `cart_items.order_id` plus shared rows from `shared_order_ids`. Each person returns `orders` as an array containing all matching orders for that same `session_id`; it is an empty array when no order exists.
 
 This is the **canonical "table view" response**. Order draft and confirmation flows may return this complete shape; [§3.18 Update Order](#318-update-order-) returns only a compact `state_patch` and relies on this endpoint solely for initial loading or recovery.
 
 **Authentication:** required (Bearer token).
 
-**Scope rule:** the customer must have an `active` row in `table_scan_sessions`. `people[]` includes every active session at the same restaurant table.
+**Scope rule:** the customer must have an `active` row in `table_scan_sessions`. For dine-in, `people[]` includes every active session at the same restaurant table. For pickup/takeaway, it includes active sessions with the same vendor, mode, and PIN.
 
 **Response (200):**
 
@@ -3702,7 +3704,7 @@ For readability, the route-specific examples below abbreviate the repeated affec
 
 **POST** `/api/customer/payments/pay-for`
 
-Assigns a single eligible order belonging to another customer at the authenticated customer's current table to the authenticated customer for payment.
+Assigns a single eligible order belonging to another customer in the authenticated customer's current order group to the authenticated customer for payment.
 
 **Authentication:** required (Bearer token).
 
@@ -3714,7 +3716,7 @@ Assigns a single eligible order belonging to another customer at the authenticat
 }
 ```
 
-`order_id` is required. It accepts either the order's numeric ID or its `order_public_id` and must reference an eligible tablemate order in the current active table session — confirmed or later, unpaid, and not cancelled — otherwise a 422 validation error is returned on `order_id`. Only the referenced order is assigned; the customer's other orders are unaffected. Repeating the same request is idempotent. To pay for several orders, call the endpoint once per order.
+`order_id` is required. It accepts either the order's numeric ID or its `order_public_id` and must reference an eligible participant order in the current active group — unpaid and not cancelled — otherwise a 422 validation error is returned on `order_id`. Dine-in eligibility starts at `confirmed`; pickup/takeaway also permits `draft` because confirmation happens only after payment. Only the referenced order is assigned; the customer's other orders are unaffected. Repeating the same request is idempotent. To pay for several orders, call the endpoint once per order.
 
 If the payer previously shared any item owned by the selected order, those individual share references are removed atomically before full-order coverage is assigned. The returned `state_patch` contains every recalculated order/item and any empty side-order ID that was removed.
 
@@ -3798,7 +3800,7 @@ When at least one assignment is released, every customer with an active session 
 
 **POST** `/api/customer/payments/request-cash`
 
-Requests a cash payment for every order payable by the authenticated customer in their active table visit: their own eligible unpaid orders plus any tablemate orders explicitly assigned to them through the pay-for flow. Creates an `order_payments` record with status `cash_requested` and notifies all customers at the table plus the waiter staff. The waiter manually confirms cash receipt via `PATCH /api/vendor/orders/{orderId}/confirm-cash`.
+Requests a cash payment for every order payable by the authenticated customer in their active order group: their own eligible unpaid orders plus any participant orders explicitly assigned to them through the pay-for flow. Creates an `order_payments` record with status `cash_requested` and notifies the exact group plus waiter staff. The waiter/vendor manually confirms cash receipt via `PATCH /api/vendor/orders/{orderId}/confirm-cash`.
 
 **Authentication:** required (Bearer token).
 
@@ -3821,7 +3823,7 @@ Requests a cash payment for every order payable by the authenticated customer in
 - Resolves the payer from the authenticated token; no `customer_id` is accepted or required.
 - Resolves payable orders from the payer's active table session; no `order_id` is accepted or required.
 - Rejects an owner attempting to pay an order assigned to someone else with HTTP `409`.
-- Includes all confirmed-or-later, unpaid orders assigned to the payer in the same active table visit.
+- Includes all eligible unpaid orders assigned to the payer in the same active group. Pickup/takeaway drafts are eligible; dine-in orders must be confirmed or later.
 - Rejects if any session has unsubmitted cart items (HTTP `422`).
 - Rejects if total amount is zero or negative (HTTP `422`).
 - Creates one `order_payments` row with `status: 'cash_requested'`, `payment_method: 'cash'`, and `notes` in metadata.
@@ -3846,6 +3848,8 @@ Requests a cash payment for every order payable by the authenticated customer in
 }
 ```
 
+For pickup/takeaway, the response message is `Cash payment requested. Please pay when collecting the order.` The order remains a payment-pending draft until vendor/waiter confirmation.
+
 **Response (409) — assigned to another payer or already paid:**
 
 ```json
@@ -3864,7 +3868,7 @@ Requests a cash payment for every order payable by the authenticated customer in
 
 **POST** `/api/customer/payments/create-intent`
 
-Creates one Stripe PaymentIntent covering every payable order in the authenticated customer's current table visit: the customer's own unpaid orders in their active table session, plus every unpaid order at the same table whose `paid_by` is the authenticated customer. This endpoint is for Stripe Elements / PaymentElement; the frontend stays in the app and uses the returned `clientSecret`.
+Creates one Stripe PaymentIntent covering every payable order in the authenticated customer's current order group: the customer's own unpaid orders in their active session, plus every unpaid group order whose `paid_by` is the authenticated customer. This endpoint is for Stripe Elements / PaymentElement; the frontend stays in the app and uses the returned `clientSecret`.
 
 **Authentication:** required (Bearer token).
 
@@ -3873,8 +3877,8 @@ Creates one Stripe PaymentIntent covering every payable order in the authenticat
 **Backend behavior:**
 
 - Requires an active table scan session for the authenticated customer (HTTP `422` otherwise).
-- Includes the customer's own confirmed-or-later, unpaid orders in that session, excluding orders another customer has claimed via pay-for.
-- Includes all confirmed-or-later, unpaid orders at the same table assigned to the payer via pay-for.
+- Includes the customer's own eligible unpaid orders in that session, excluding orders another customer has claimed via pay-for. Pickup/takeaway drafts are eligible; dine-in orders must be confirmed or later.
+- Includes all eligible unpaid group orders assigned to the payer via pay-for under the same mode rule.
 - Returns HTTP `409` when the customer's only unpaid orders are assigned to another payer, and HTTP `422` when there is nothing to pay.
 - Derives `table_session_id` from the covered orders; the frontend does not send it.
 - Recalculates each covered order from bound and shared cart rows and charges their combined total.
@@ -4039,7 +4043,7 @@ Retrieves the PaymentIntent from Stripe, verifies it matches the authenticated c
 
 **DELETE** `/api/customer/payments/intent`
 
-Cancels the authenticated customer's non-processing Stripe PaymentIntent for the current active table, resets `payment_pending` on every covered unpaid order, and returns the authoritative unlock patch. A Stripe intent already in `processing` cannot be canceled.
+Cancels the authenticated customer's non-processing Stripe PaymentIntent for the current active order group, resets `payment_pending` on every covered unpaid order, and returns the authoritative unlock patch. A Stripe intent already in `processing` cannot be canceled.
 
 **Authentication:** required (Bearer token).
 
@@ -5275,117 +5279,303 @@ All endpoints return standard JSON error responses:
 
 ---
 
-## Pickup Endpoints
+## 10. Pickup and Takeaway Shared Session Flow
 
-Pickup endpoints manage the takeaway/pickup order flow. All authenticated pickup endpoints require the `X-Order-Mode: pickup` header to disambiguate from dine-in sessions.
+Pickup and takeaway use the same table-session, cart, sharing, payment, history, tracking, and receipt APIs as dine-in. They are selected with an order-mode header; clients must not build a second order API around the legacy `/pickup/*` routes.
 
-### Token Status (Public)
+### 10.1 Order Modes and Required Header
 
-Check if a takeaway QR token is valid and get vendor info.
+| Flow | Entry point | Required header | Target field | Timing |
+|---|---|---|---|---|
+| Pickup | Restaurant public page | `X-Order-Mode: pickup` | `vendor_public_id` | ASAP (`scheduled_for: null`) or a future time |
+| Takeaway | Vendor's single takeaway QR | `X-Order-Mode: takeaway` | `token` | Always ASAP; omit `scheduled_for` |
+| Dine-in | Table QR | Header omitted | Table QR `token` | Existing table behavior |
 
-**GET** `/api/customer/pickup/status?token={token}`
+The mode header is required on **every** pickup/takeaway request, including public target resolution, session creation/joining, cart, draft, history, sharing, payment, tracking, receipt, and session close. If the header is absent or unrecognized, the backend resolves the request as dine-in.
 
-**Auth:** None (public)
+Pickup and takeaway sessions are isolated from each other even when they belong to the same vendor and customer.
+
+### 10.2 Lifecycle and Payment Gate
+
+1. Resolve the restaurant or QR token with `GET /api/customer/table/status`.
+2. The first customer starts the order with `POST /api/customer/table/scan` and receives a four-digit PIN.
+3. Friends join the same vendor, mode, and PIN group through `POST /api/customer/table/pin`.
+4. Every participant maintains their own cart. `POST /api/customer/table/order/draft` converts it to a visible group draft.
+5. Participants can share items and assign another participant's draft for payment exactly as in dine-in.
+6. A pickup/takeaway order remains `draft` until Stripe succeeds or a vendor/waiter confirms cash. The payment transaction then sets `payment_received: true`, changes the order to `confirmed`, and sets `confirmed_at`.
+7. Paid ASAP orders are released to the kitchen immediately. A paid scheduled pickup is released 20 minutes before `scheduled_for`.
+8. When every item is ready, the vendor/waiter can mark the order picked up.
+
+> **Important:** Off-premise clients use `POST /api/customer/table/order/draft`. They must not call `POST /api/customer/table/order/confirmed`; that endpoint remains the dine-in confirmation path. Pickup and takeaway confirmation is a payment-side effect.
+
+### 10.3 Resolve the Ordering Target (Public)
+
+**GET** `/api/customer/table/status`
+
+**Auth:** none.
+
+Pickup request:
+
+```http
+GET /api/customer/table/status?vendor_public_id=VID-8492
+X-Order-Mode: pickup
+```
+
+Takeaway request:
+
+```http
+GET /api/customer/table/status?token=b7c2d3e4-f5a6-7890-abcd-ef1234567890
+X-Order-Mode: takeaway
+```
 
 **Response (200):**
 
 ```json
 {
+    "table": null,
     "vendor": {
-        "id": 1,
-        "name": "Restaurant Name",
-        "slug": "restaurant-slug"
+        "id": "VID-8492",
+        "name": "Bella Italia GmbH",
+        "slug": "bella-italia"
     },
-    "type": "takeaway"
+    "status": "available",
+    "orderMode": "pickup"
 }
 ```
 
-### Scan (Create Pickup Session)
-
-Scan a takeaway QR token to start a pickup session. Returns the existing active session if one already exists for this vendor+customer.
-
-**POST** `/api/customer/pickup/scan`
-
-**Auth:** `auth:customer`
-
-**Headers:** `X-Order-Mode: pickup`
-
-**Request Body:**
+An invalid vendor identifier, inactive/missing takeaway QR, or stale takeaway token returns `410`:
 
 ```json
+{ "message": "This ordering link is no longer valid." }
+```
+
+### 10.4 Start an Order Session 🔒
+
+**POST** `/api/customer/table/scan`
+
+**Authentication:** required (Bearer customer token).
+
+Pickup ASAP:
+
+```http
+X-Order-Mode: pickup
+Content-Type: application/json
+
 {
-    "token": "takeaway-qr-token-string"
+    "vendor_public_id": "VID-8492",
+    "scheduled_for": null
 }
 ```
 
-**Response (200):**
+Pickup scheduled for later:
+
+```http
+X-Order-Mode: pickup
+Content-Type: application/json
+
+{
+    "vendor_public_id": "VID-8492",
+    "scheduled_for": "2026-08-10T19:30:00+05:00"
+}
+```
+
+Takeaway (always ASAP):
+
+```http
+X-Order-Mode: takeaway
+Content-Type: application/json
+
+{
+    "token": "b7c2d3e4-f5a6-7890-abcd-ef1234567890"
+}
+```
+
+`scheduled_for` is nullable, must not be in the past, and is used only by pickup clients. Retrying for the same customer, vendor, and mode reuses their active session; when `scheduled_for` is present, it updates that session's schedule.
+
+**Response (201):**
 
 ```json
 {
-    "session": { ... },
-    "vendor": {
-        "id": 1,
-        "name": "Restaurant Name",
-        "slug": "restaurant-slug",
-        "logo_url": "https://...",
-        "currency": "EUR"
-    },
+    "message": "Order session started.",
+    "status": "active",
     "requiresPin": false,
-    "pin": ""
+    "pin": "4821",
+    "session": {
+        "id": "73",
+        "status": "active",
+        "type": "pickup",
+        "pin": "4821",
+        "scannedAt": "09.08.2026 18:40",
+        "scheduledFor": "10.08.2026 19:30"
+    },
+    "table": null,
+    "vendor": {
+        "id": "VID-8492",
+        "name": "Bella Italia GmbH",
+        "slug": "bella-italia",
+        "currency": "EUR",
+        "logo_url": "http://localhost:8000/media/vendors/1/logo/bella.png"
+    }
 }
 ```
 
-### Session Status
+Date/time strings in the response use the vendor's configured timezone and display format. An ASAP session returns `scheduledFor: null`.
 
-Check if the authenticated customer has an active pickup session.
+### 10.5 Join an Existing Order With PIN 🔒
 
-**GET** `/api/customer/pickup/session/status`
+**POST** `/api/customer/table/pin`
 
-**Auth:** `auth:customer`
+Use the same mode and target used by the person who started the session.
 
-**Headers:** `X-Order-Mode: pickup`
+Pickup example:
 
-**Response (200):**
+```json
+{
+    "vendor_public_id": "VID-8492",
+    "pin": "4821"
+}
+```
+
+Takeaway example:
+
+```json
+{
+    "token": "b7c2d3e4-f5a6-7890-abcd-ef1234567890",
+    "pin": "4821"
+}
+```
+
+The joining participant receives the owner's `pin` and `scheduled_for`. Group membership is scoped to the same vendor, `pickup`/`takeaway` mode, active status, and PIN; a PIN from the other mode or restaurant cannot join the group.
+
+**Response:** `201` when a participant is created, or `200` when that customer is already joined. The payload has the same `session`, `table: null`, and `vendor` structure as [Start an Order Session](#104-start-an-order-session-).
+
+**Response (422):**
+
+```json
+{ "message": "The provided PIN is invalid for this restaurant." }
+```
+
+### 10.6 Session Status and Group History 🔒
+
+**GET** `/api/customer/table/session/status`
+
+Send the current `X-Order-Mode` header. The active response includes `session.type`, `pin`, and `scheduledFor`; `table` is `null` for pickup/takeaway.
 
 ```json
 {
     "active": true,
-    "session": { ... }
+    "session": {
+        "id": "73",
+        "status": "active",
+        "type": "takeaway",
+        "pin": "4821",
+        "scannedAt": "09.08.2026 18:40",
+        "scheduledFor": null
+    },
+    "table": null,
+    "vendor": {}
 }
 ```
 
-### Close Session
+When no mode-matching session exists, the response is:
 
-Close the pickup session. Fails if there are unpaid orders.
+```json
+{
+    "active": false,
+    "session": null,
+    "table": null,
+    "vendor": null
+}
+```
 
-**POST** `/api/customer/pickup/close`
+**GET** `/api/customer/table/history` returns the same shared group view described in [§4.1](#41-get-current-table-history), but `people[]` is scoped by vendor + mode + PIN instead of a physical table. Every joined participant can see the other participants and their draft/confirmed orders.
 
-**Auth:** `auth:customer`
+### 10.7 Cart, Draft, Sharing, and Pay-for 🔒
 
-**Headers:** `X-Order-Mode: pickup`
+All routes below require `X-Order-Mode: pickup` or `X-Order-Mode: takeaway`:
+
+| Method | Endpoint | Off-premise behavior |
+|---|---|---|
+| `GET` | `/api/customer/cart` | Get the current participant's mode-scoped cart |
+| `POST` | `/api/customer/cart/items` | Add an item |
+| `PATCH` | `/api/customer/cart/items/{id}` | Change quantity/customization |
+| `DELETE` | `/api/customer/cart/items/{id}` | Remove an item |
+| `POST` | `/api/customer/table/order/draft` | Create/update the participant's visible `draft`; `order_type` is the session mode |
+| `PUT` | `/api/customer/table/order/update/{order_id}` | Share or unshare items inside the PIN group |
+| `GET` | `/api/customer/table/history` | Read every group participant and order |
+| `POST` | `/api/customer/payments/pay-for` | Assign one eligible group member's draft/order to the payer |
+| `DELETE` | `/api/customer/payments/pay-for/{orderId}` | Release an unpaid payment assignment |
+
+For pickup/takeaway, pay-for eligibility includes unpaid drafts. The same pricing, item-sharing, payer assignment, idempotency, and `state_patch` rules documented in [§3.18](#318-update-order-) and [§4.4.1–4.4.2](#441-assign-a-tablemates-order-for-payment) apply to the mode-scoped PIN group.
+
+### 10.8 Card and Cash Payment 🔒
+
+The existing payment endpoints are shared by all modes:
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/customer/payments/create-intent` | Create/reuse the group's Stripe PaymentIntent |
+| `POST` | `/api/customer/payments/update-intent` | Add/update the tip |
+| `GET` | `/api/customer/payments/intent` | Get the active intent |
+| `DELETE` | `/api/customer/payments/intent` | Cancel an eligible active intent |
+| `GET` | `/api/customer/payments/verify?payment_intent={id}` | Verify and synchronize payment |
+| `POST` | `/api/customer/payments/request-cash` | Request cash collection for payable group orders |
+
+For pickup/takeaway only:
+
+- Stripe success changes every covered off-premise draft to `confirmed` in the same payment transaction.
+- A cash request keeps covered orders as `draft` with `payment_pending: true`.
+- `PATCH /api/vendor/orders/{orderId}/confirm-cash` marks every covered off-premise order paid and confirmed together.
+- Kitchen release is attempted only after payment confirmation. Payment success does not make a scheduled pickup visible in the kitchen's active preparation queue before its release time.
+
+See [§4.5–4.8](#45-request-cash-payment) for the request/response schemas. In off-premise responses, cash-request copy refers to collection instead of a waiter coming to a table.
+
+### 10.9 Order Tracking and Receipts 🔒
+
+These existing endpoints also resolve pickup/takeaway orders normally when called by an authorized customer:
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/customer/orders/history` | Customer account order history |
+| `GET` | `/api/customer/orders/{orderPublicId}` | Order detail |
+| `GET` | `/api/customer/orders/{orderPublicId}/tracking` | Live order status and item progress |
+| `GET` | `/api/customer/orders/{orderPublicId}/receipt` | Order receipt |
+| `GET` | `/api/customer/receipts` | Payments made by this customer |
+
+### 10.10 Session Close and Automatic Expiry 🔒
+
+**POST** `/api/customer/table/close`
+
+The header identifies which active pickup/takeaway group to close; no table ID is required. Closing one participant's off-premise session closes every active session in the same vendor + mode + PIN group.
 
 **Response (200):**
 
 ```json
 {
-    "message": "Session closed."
+    "message": "Order session closed.",
+    "status": "closed"
 }
 ```
 
-### Using Existing Endpoints with Pickup
+The request returns `422` while the group contains a non-cancelled unpaid order, including a draft:
 
-The following existing endpoints support pickup when the `X-Order-Mode: pickup` header is set:
+```json
+{ "message": "This order group still has unpaid orders." }
+```
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/customer/cart` | GET | Get cart items for active pickup session |
-| `/api/customer/cart/items` | POST | Add item to pickup cart |
-| `/api/customer/cart/items/{id}` | PATCH | Update pickup cart item |
-| `/api/customer/cart/items/{id}` | DELETE | Remove pickup cart item |
-| `/api/customer/table/order/draft` | POST | Create draft pickup order (order_type: 'takeaway') |
-| `/api/customer/table/order/confirmed` | POST | Confirm pickup order |
-| `/api/customer/table/history` | GET | Get pickup order history |
-| `/api/customer/orders/{id}/tracking` | GET | Track pickup order |
-| `/api/customer/payments/create-intent` | POST | Create Stripe payment intent for pickup |
-| `/api/customer/payments/verify` | GET | Verify pickup payment |
-| `/api/customer/orders/{id}/receipt` | GET | Get pickup order receipt |
+The scheduler runs `table-sessions:close-stale` every minute:
+
+- An off-premise group with no non-draft order (no order or only drafts) expires after 10 minutes without session activity or a draft update.
+- A pending cash request is not treated as an abandoned draft and is not expired by the 10-minute rule.
+- A completed group closes immediately when all non-draft orders are paid and `picked_up`/`cancelled` and no draft remains. An abandoned draft left beside completed orders is closed after its own 10-minute inactivity window.
+- Closing/expiry sends `session_expire` to every customer in the exact PIN group.
+
+### 10.11 Realtime Scope
+
+Pickup/takeaway realtime notifications use the existing private customer channels and Pusher authorization endpoint. Unlike dine-in table broadcasts, recipients are the customer IDs in the same active vendor + mode + PIN group. Relevant events include participant join, cart/order updates, payment assignment, payment requested/completed, preparation progress, order ready, picked up, and session closed.
+
+Mutation responses and notifications continue to carry the authoritative `metadata.state_patch` documented earlier. Clients should apply the returned patch immediately, apply Pusher copies for other participants, and deduplicate by patch ID instead of polling the history endpoint after every mutation.
+
+### 10.12 Legacy Compatibility Routes
+
+`/api/customer/pickup/status`, `/api/customer/pickup/scan`, `/api/customer/pickup/session/status`, and `/api/customer/pickup/close` remain registered for compatibility with older clients. New pickup and takeaway clients must use the shared `/table/*`, `/cart/*`, and `/payments/*` routes documented above so PIN groups, draft-until-paid behavior, scheduling, sharing, and realtime scope remain consistent.

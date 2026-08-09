@@ -11,6 +11,7 @@ Authenticated endpoints require a token obtained via `POST /api/vendor/login`. V
 ## Table of Contents
 
 1. [Overview & Concepts](#1-overview--concepts)
+   - [Off-premise payment and kitchen release](#off-premise-payment-and-kitchen-release)
    - [Redis-first TeamMember mutations](#redis-first-teammember-mutations)
    - [Get staff command status](#get-staff-command-status)
 2. [List Orders (Grouped)](#2-list-orders-grouped)
@@ -79,20 +80,33 @@ Call `POST .../fire-course` to advance to the next course.
 | `orderType` | Description |
 |---|---|
 | `dine-in` | Table service — grouped into sessions |
-| `takeaway` | Collection orders — not grouped into sessions |
+| `pickup` | Public-restaurant pickup; ASAP or scheduled, with a shared PIN group |
+| `takeaway` | Takeaway-QR collection; always ASAP, with a shared PIN group |
 
 ### Order Statuses
 
 | Status | Description |
 |---|---|
-| `pending` | Order placed, awaiting confirmation |
-| `confirmed` | Confirmed by waiter or system |
-| `preparing` | In the kitchen |
-| `ready` | Ready for pickup / serving |
-| `delivered` | Delivered to customer |
-| `picked_up` | Customer collected (takeaway) |
+| `draft` | Cart confirmed by the customer but not yet submitted/paid |
+| `confirmed` | Confirmed by the dine-in flow, or paid off-premise |
+| `waiter_confirmed` | Explicitly confirmed by waiter |
+| `in_progress` | At least one kitchen action has started |
+| `picked_up` | Customer collected (pickup or takeaway) |
 | `served` | Served at the table (dine-in) |
 | `cancelled` | Cancelled |
+
+### Off-premise payment and kitchen release
+
+Pickup and takeaway use the same order model and operational endpoints as dine-in, but are payment-gated:
+
+- Customer cart confirmation creates a `draft`; it is not an actionable kitchen order.
+- Stripe success or vendor/waiter cash confirmation changes every covered off-premise draft to `confirmed` and marks it paid in the same transaction.
+- Vendors and waiters receive the paid order immediately.
+- A paid ASAP pickup/takeaway receives `kitchenReleasedAt` immediately and enters the normal kitchen queue.
+- A paid scheduled pickup remains visible to kitchen in the separate **Pickups** view while `kitchenReleasedAt` is `null`. It enters the normal preparation queue 20 minutes before `scheduledFor`.
+- `kitchenReleasedAt` is a visibility/release timestamp, not a replacement for item states such as `in_progress` or `ready`.
+
+The scheduler must run `php artisan kitchen-orders:release-scheduled` every minute. Release is lock-protected and idempotent, so retrying the command or processing the same payment event does not generate a second kitchen release.
 
 ### Redis-first TeamMember mutations
 
@@ -112,6 +126,7 @@ The Redis-first path applies to the role-authorized TeamMember actions below:
 | `PATCH /api/vendor/orders/{orderId}/ready` | Kitchen | `order.ready` |
 | `PATCH /api/vendor/orders/{orderId}/items/{cartItemId}` | Kitchen: `new`, `preparing`, `ready`; waiter: `served` | `order.item_status` |
 | `PATCH /api/vendor/orders/{orderId}/items/serve-ready` | Waiter | `order.items_serve_ready` |
+| `PATCH /api/vendor/orders/{orderId}/picked-up` | Waiter | `order.picked_up` |
 | `PATCH /api/vendor/orders/{orderId}/served` | Waiter | `order.served` |
 | `PATCH /api/vendor/notifications/{id}/read` | Waiter or kitchen | `notification.read` |
 | `POST /api/vendor/notifications/read-all` | Waiter or kitchen | `notification.read_all` |
@@ -250,14 +265,14 @@ is marked read, and does not appear in the visible notification list or unread c
 
 Returns orders split into two groups:
 - **`sessions`** — active dine-in table groups built from `table_scan_sessions`, grouped by `restaurant_table_id`.
-- **`takeaway`** — takeaway/collect orders not linked to a session.
+- **`takeaway`** — the flat off-premise collection containing both `pickup` and `takeaway` orders. These orders can still belong to customer PIN-group `table_scan_sessions`; they are not grouped as physical tables in this response.
 
 **Query Parameters:**
 
 | Parameter | Type | Description |
 |---|---|---|
-| `status` | `string` | Filter orders by status (e.g. `pending`, `ready`) |
-| `orderType` | `string` | Filter takeaway orders by type (`takeaway`, etc.) |
+| `status` | `string` | Filter orders by persisted status (e.g. `confirmed`, `in_progress`, `picked_up`) |
+| `orderType` | `string` | Filter by type: `dine-in`, `pickup`, or `takeaway` |
 
 **Response `200`:**
 ```json
@@ -293,10 +308,28 @@ Returns orders split into two groups:
     }
   ],
   "takeaway": [
-    { /* order object */ }
+    {
+      "id": "42",
+      "orderType": "pickup",
+      "orderMode": "pickup",
+      "status": "confirmed",
+      "paymentReceived": true,
+      "scheduledFor": "2026-08-10T19:30:00.000000Z",
+      "kitchenReleasedAt": null,
+      "pickupTime": "2026-08-10T19:30:00.000000Z",
+      "pickupStatus": "pending"
+    }
   ]
 }
 ```
+
+Actor-specific visibility:
+
+- Vendor owners and waiters receive submitted off-premise orders immediately. Paid orders are confirmed; a cash-requested order remains a visible `draft` with `paymentPending: true` until cash is confirmed.
+- Kitchen never receives an unpaid draft.
+- Kitchen receives a paid future scheduled `pickup` with `kitchenReleasedAt: null` so it can be displayed in the separate **Pickups** tab. The client sorts that tab by `scheduledFor` day/time and treats unreleased rows as read-only.
+- The kitchen's normal **New/Ready** queues include an off-premise order only after `kitchenReleasedAt` is set. These cards display `Pickup at {pickupTime}`; after release their preparation behavior is identical to dine-in.
+- Takeaway is always ASAP, so a paid takeaway is released immediately rather than appearing as a future scheduled pickup.
 
 ---
 
@@ -328,7 +361,7 @@ Update status or payment fields on any order. Use the dedicated endpoints for co
 
 | Field | Type | Allowed Values |
 |---|---|---|
-| `status` | `string` | `pending`, `confirmed`, `preparing`, `ready`, `delivered`, `picked_up`, `cancelled` |
+| `status` | `string` | `draft`, `confirmed`, `waiter_confirmed`, `in_progress`, `served`, `picked_up`, `cancelled` |
 | `paymentPending` | `boolean` | — |
 | `paymentReceived` | `boolean` | Setting to `true` also sets `paymentConfirmedAt` |
 | `paymentNote` | `string\|null` | Max 500 chars |
@@ -372,6 +405,8 @@ poll its `status_url` for the eventual controller response.
 
 Records that cash payment has been received. Sets `paymentReceived → true`, `paymentPending → false`, records `paymentConfirmedAt`, and sets `paymentMethod → cash`. Waiters can collect any unpaid order this way, even without a customer cash request or when a different payment method had previously been selected.
 
+For pickup/takeaway, a customer cash request leaves the covered orders as drafts. Confirming cash atomically marks every order covered by that cash payment as paid and changes each off-premise draft to `confirmed`. Each confirmed order is then passed through the same ASAP/scheduled kitchen-release rules described above. This is the only cash-payment step that makes those orders actionable by the kitchen.
+
 **Request Body (optional):**
 
 ```json
@@ -404,7 +439,7 @@ finishes with `status: "completed"`.
 
 ### `PATCH /api/vendor/orders/{orderId}/ready`
 
-Marks the order as ready for pickup or serving. Sets `status → ready` and stamps `cart_items.ready_at = now()` on every cart_item linked to this order (owned by the order's session, plus any cart_item whose `shared_order_ids` JSON contains the order's id). The order-level `readyAt` returned in the response is the latest such timestamp once *every* linked cart_item has been marked ready; otherwise `null`.
+Marks every linked item ready for pickup or serving. It stamps `cart_items.ready_at = now()` (owned by the order's session, plus any cart item whose `shared_order_ids` contains the order ID), ensures the persisted order is `in_progress`, and records `in_progress_at`. The returned order-level `readyAt` is the latest item timestamp once *every* linked item is ready; `pickupStatus` is then `ready`.
 
 **Request Body:** none
 
@@ -412,7 +447,9 @@ Marks the order as ready for pickup or serving. Sets `status → ready` and stam
 must send a UUID `Idempotency-Key` header and receive `202`; use the command status for the domain
 result.
 
-**Response `200`:** Returns the updated [Order Object](#order-object) with `status: "ready"`.
+**Response `200`:** Returns the updated [Order Object](#order-object) with `status: "in_progress"`, every item `status: "ready"`, and `pickupStatus: "ready"` for off-premise.
+
+For pickup/takeaway, the endpoint returns `409` if payment is not confirmed or `kitchenReleasedAt` is still `null`. A future order shown in the kitchen's **Pickups** tab cannot be prepared early through this endpoint.
 
 ---
 
@@ -448,6 +485,8 @@ Direct forward jumps are allowed. Repeating the current status is an idempotent
 `200` response and does not create duplicate notifications. A request that would
 move an item backward is rejected with `409 Conflict` and does not alter any
 timestamps.
+
+For pickup/takeaway, item mutations also return `409` while the order is unpaid/draft or while `kitchenReleasedAt` is `null`. Once released, the same forward-only kitchen state machine applies as for dine-in.
 
 ### Request Body
 ```json
@@ -645,11 +684,54 @@ are idempotent and do not generate duplicate notifications. Errors:
 
 ### `PATCH /api/vendor/orders/{orderId}/picked-up`
 
-Marks a takeaway order as collected. Sets `status → picked_up`. (No timestamp is recorded — pickup is reflected by the status alone.)
+Marks a paid pickup or takeaway order as collected. This waiter action replaces the dine-in **Serve** action for off-premise orders.
 
 **Request Body:** none
 
-**Response `200`:** Returns the updated [Order Object](#order-object) with `status: "picked_up"`.
+**Execution:** A vendor owner executes synchronously. An active waiter sends a UUID `Idempotency-Key` and receives the shared `202` acknowledgement for operation `order.picked_up`; the order changes only after that command completes. Kitchen staff cannot perform this action.
+
+**Preconditions:**
+
+- The order belongs to an active pickup/takeaway session.
+- `paymentReceived` is `true` and the order is no longer `draft`.
+- Every linked item has `readyAt` set.
+- The order is not `cancelled` or `served`.
+
+On success, the endpoint sets `status → picked_up`, records `pickedUpAt`, and records `pickedUpAt` on every linked item. Repeating the action for an already picked-up order is idempotent and returns its current representation.
+
+**Response `200`:**
+
+```json
+{
+  "id": "42",
+  "orderMode": "pickup",
+  "status": "picked_up",
+  "displayStatus": "picked-up",
+  "pickupStatus": "picked-up",
+  "pickedUpAt": "2026-08-10T19:34:00.000000Z",
+  "items": [
+    {
+      "cartItemId": 17,
+      "status": "picked_up",
+      "pickedUpAt": "2026-08-10T19:34:00.000000Z"
+    }
+  ]
+}
+```
+
+**Conflict responses (`409`):**
+
+```json
+{ "message": "Only pickup and takeaway orders can be marked picked up." }
+```
+
+```json
+{ "message": "Payment must be confirmed before pickup." }
+```
+
+```json
+{ "message": "All order items must be ready before pickup." }
+```
 
 ---
 
@@ -756,20 +838,26 @@ This legacy endpoint sets `status → closed` and records `closedAt` on the requ
   "id": "42",
   "orderPublicId": "ord-abc123",
   "orderNumber": "#9001",
-  "orderType": "dine-in",
-  "tableNumber": "3",
-  "tableId": "3",
+  "orderType": "pickup",
+  "orderMode": "pickup",
+  "tableNumber": null,
+  "tableId": null,
   "tableScanSessionId": "18",
-  "course": "mains",
-  "waiterConfirmed": true,
-  "waiterConfirmedAt": "2026-03-29T12:05:00.000Z",
+  "course": null,
+  "waiterConfirmed": false,
+  "waiterConfirmedAt": null,
   "customer": {
     "id": "10",
     "name": "Jane Smith",
     "email": "jane@example.com",
     "phone": "+43 660 1234567"
   },
-  "status": "preparing",
+  "status": "in_progress",
+  "displayStatus": "in_progress",
+  "pickupStatus": "pending",
+  "scheduledFor": "2026-08-10T19:30:00.000000Z",
+  "kitchenReleasedAt": "2026-08-10T19:10:00.000000Z",
+  "pickupTime": "2026-08-10T19:30:00.000000Z",
   "itemsCount": 3,
   "items": [
     {
@@ -784,9 +872,10 @@ This legacy endpoint sets `status → closed` and records `closedAt` on the requ
       "status": "in_progress",
       "sharedBetween": 1,
       "sharedWithOrderIds": [],
-      "preparingStartAt": "2026-03-29T12:03:00.000Z",
+      "preparingStartAt": "2026-08-10T19:12:00.000000Z",
       "readyAt": null,
-      "servedAt": null
+      "servedAt": null,
+      "pickedUpAt": null
     }
   ],
   "amount": 18.50,
@@ -808,26 +897,30 @@ This legacy endpoint sets `status → closed` and records `closedAt` on the requ
   },
   "paymentPending": false,
   "paymentReceived": true,
-  "paymentConfirmedAt": "2026-03-29T12:10:00.000Z",
+  "paymentConfirmedAt": "2026-08-10T19:05:00.000000Z",
   "paymentNote": null,
   "readyAt": null,
   "servedAt": null,
+  "pickedUpAt": null,
   "cancelledAt": null,
   "cancelledReason": null,
   "timeline": [
-    { "status": "received", "timestamp": "2026-03-29T12:00:00.000Z" }
+    { "status": "confirmed", "timestamp": "2026-08-10T19:05:00.000000Z" },
+    { "status": "in_progress", "timestamp": "2026-08-10T19:12:00.000000Z" }
   ],
-  "createdAt": "2026-03-29T12:00:00.000Z",
-  "updatedAt": "2026-03-29T12:05:00.000Z"
+  "createdAt": "2026-08-10T19:00:00.000000Z",
+  "updatedAt": "2026-08-10T19:12:00.000000Z"
 }
 ```
 
 **Notes:**
 - `itemsCount` is computed live as the sum of `quantity` across linked cart_items.
 - `items[]` is built live from `cart_items` (owned by the order's session, plus any cart_item whose `shared_order_ids` JSON contains the order id).
-- Item `status` is derived from `served_at`, `ready_at`, and `preparing_start_at`: `served`, `ready`, `in_progress`, or `new`.
+- Item `status` is derived from `picked_up_at`, `served_at`, `ready_at`, and `preparing_start_at`: `picked_up`, `served`, `ready`, `in_progress`, or `new`.
 - `readyAt` reflects the order-level rollup (latest timestamp once *all* linked cart_items have `ready_at` set). The per-item `readyAt` is the canonical value.
-- `pickedUpAt` and `guestCount` are no longer returned — both columns were dropped from `orders`.
+- `orderMode` is sourced from the active customer session when available and is `dine-in`, `pickup`, or `takeaway`.
+- `scheduledFor` is the requested pickup time. `kitchenReleasedAt` is set when the order enters the kitchen preparation queue. `pickupTime` is `scheduledFor` for scheduled pickup, otherwise the order's estimated ASAP collection time.
+- `pickupStatus` is `pending`, `ready`, or `picked-up`. `pickedUpAt` is returned at both order and item level after collection.
 - `paymentMethod` remains the order-level payment category used by operational logic. Use `paymentMethodDetails` or `paymentMethodLabel` for the exact Stripe wallet, card brand, and safe masked card number.
 
 ### Table Scan Session Group Object
@@ -1088,6 +1181,20 @@ supported and otherwise refresh the Laravel resources listed in `metadata.resour
 events have `is_silent: true` and `read: true`; they invalidate application data but do not enter
 the visible notification feed or unread count.
 
+### 16.6 Pickup/Takeaway Realtime Sequence
+
+All operational deliveries use the same `.notification.created` subscription and include a full current order at `metadata.order` so kitchen/waiter clients can insert or update the card without a follow-up request.
+
+| Moment | Audience | Event | Delivery behavior |
+|---|---|---|---|
+| Off-premise payment confirmed | Vendor + waiter | `order_confirmed` | Immediate normal notification; waiter can see the paid collection order |
+| Future scheduled pickup paid | Kitchen | `order_scheduled` | Silent (`is_silent: true`, already read); inserts/updates the separate Pickups tab with `kitchenReleasedAt: null`, without toast or sound |
+| ASAP payment or scheduled pickup reaches T−20 | Kitchen | `order_confirmed` | Normal urgent notification with `sound: "new_order"`; `metadata.order.kitchenReleasedAt` is set and the card enters the normal queue |
+| Order collected | Customer PIN group | `order_updated` | Carries `template: "order.picked_up"` and authoritative `order_snapshots` |
+| Order collected | Vendor + waiter + kitchen | `order_picked_up` | Silent operational update; removes/reconciles the active collection card without adding notification noise |
+
+Payment webhook delivery, cash confirmation, and the scheduled-release command all use the same idempotent release service. Kitchen clients may therefore reconcile repeated snapshots safely by event ID and the order's current `kitchenReleasedAt`.
+
 The backend requires the following deployment settings. Operational persistence and Pusher delivery
 are isolated from customer notification timing on dedicated Redis queues.
 
@@ -1138,7 +1245,7 @@ PUSHER_APP_CLUSTER=...
 | `PATCH` | `/api/vendor/orders/{orderId}/items/{cartItemId}` | Update cart item status for KDS/waiter |
 | `PATCH` | `/api/vendor/orders/{orderId}/items/serve-ready` | Serve 1–50 ready items with one order command |
 | `POST` | `/api/vendor/orders/items/status-batch` | Dispatch 1–50 item-status staff commands |
-| `PATCH` | `/api/vendor/orders/{orderId}/picked-up` | Mark order picked up (takeaway) |
+| `PATCH` | `/api/vendor/orders/{orderId}/picked-up` | Mark a ready, paid pickup/takeaway collected; waiter TeamMember uses an async command |
 | `PATCH` | `/api/vendor/orders/{orderId}/served` | Mark served; waiter TeamMember uses an async command |
 | `PATCH` | `/api/vendor/orders/{orderId}/cancel` | Cancel order |
 | `POST` | `/api/vendor/{vendorId}/sessions/{sessionId}/release` | [Legacy] Release batch to kitchen now |
@@ -1332,7 +1439,7 @@ Returns a paginated list of all non-draft orders for the vendor, sorted newest f
 | `page` | integer | 1 | Page number |
 | `perPage` | integer | 20 | Items per page (max 50) |
 | `status` | string | — | Filter by order status (`confirmed`, `waiter_confirmed`, `in_progress`, `served`, `picked_up`, `cancelled`) |
-| `orderType` | string | — | Filter by order type (`dine-in`, `takeaway`) |
+| `orderType` | string | — | Filter by order type (`dine-in`, `pickup`, `takeaway`) |
 | `payment` | string | — | Filter by payment state (`paid`, `unpaid`, `pending-cash`) |
 | `search` | string | — | Search by order number or public ID |
 | `dateFrom` | string (`dd.mm.yyyy`) | — | Include orders created on or after this calendar date in the vendor's timezone |

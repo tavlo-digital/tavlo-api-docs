@@ -268,7 +268,9 @@ Called by the customer-facing QR landing page when a customer scans a table QR c
 
 ## 4. Takeaway QR Code
 
-The takeaway QR is a single, persistent QR code per vendor that is **not linked to any table**. It enables customers to place pickup/takeaway orders by scanning it at the entrance, counter, or from printed materials.
+The takeaway QR is a single, persistent QR code per vendor that is **not linked to any table**. Scanning it enters the customer **takeaway** flow. Takeaway always uses ASAP timing and skips pickup date/time selection.
+
+Pickup does not use this QR. Pickup starts from the restaurant's public page, resolves the vendor by `vendor_public_id`, and lets the customer choose ASAP or a future pickup time.
 
 ### GET `/api/vendor/{vendorId}/tables/takeaway-qr`
 
@@ -304,7 +306,7 @@ Regenerates the takeaway QR token. The old token becomes invalid immediately.
 
 **Public — no authentication required.**
 
-Called by the customer-facing takeaway landing page. Records a scan against the vendor's takeaway QR record.
+This vendor endpoint records scan analytics against the takeaway QR record. It does **not** create the customer's order session. The customer app must use the shared customer session endpoints documented below.
 
 **Query Parameter (optional):**
 
@@ -325,6 +327,50 @@ Called by the customer-facing takeaway landing page. Records a scan against the 
 ```json
 { "message": "This QR code is no longer valid" }
 ```
+
+### Canonical Customer Takeaway Sequence
+
+Takeaway reuses the same customer session/order APIs as pickup and dine-in. Every request in this sequence includes:
+
+```http
+X-Order-Mode: takeaway
+```
+
+1. Resolve the token publicly:
+
+   ```http
+   GET /api/customer/table/status?token=b7c2d3e4-f5a6-7890-abcd-ef1234567890
+   X-Order-Mode: takeaway
+   ```
+
+2. After customer/guest authentication, start the ASAP takeaway session:
+
+   ```http
+   POST /api/customer/table/scan
+   X-Order-Mode: takeaway
+   Content-Type: application/json
+
+   { "token": "b7c2d3e4-f5a6-7890-abcd-ef1234567890" }
+   ```
+
+   Do not send `scheduled_for` for takeaway.
+
+3. The owner receives a four-digit PIN. Another customer can join the same vendor + takeaway + PIN group:
+
+   ```http
+   POST /api/customer/table/pin
+   X-Order-Mode: takeaway
+   Content-Type: application/json
+
+   {
+     "token": "b7c2d3e4-f5a6-7890-abcd-ef1234567890",
+     "pin": "4821"
+   }
+   ```
+
+4. Cart, draft, sharing, pay-for, card/cash payment, history, tracking, receipt, and close use the existing `/api/customer/table/*`, `/api/customer/cart/*`, and `/api/customer/payments/*` routes with the same header.
+
+The order stays `draft` until payment succeeds or vendor/waiter cash confirmation is completed. A paid takeaway is released to the kitchen immediately because takeaway has no scheduled-time option. See `customer-api.md` §10 for the full shared-session contract.
 
 ---
 
