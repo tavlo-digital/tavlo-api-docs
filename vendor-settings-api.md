@@ -22,6 +22,7 @@ Returns the full vendor settings object for a single vendor.
 {
   "id": "1",
   "vendorPublicId": "abc123",
+  "slug": "my-restaurant",
   "restaurantName": "My Restaurant",
   "legalEntityName": "My GmbH",
   "businessRegistrationNumber": "FN123456a",
@@ -488,6 +489,7 @@ Logs in either the vendor owner/manager or an active invited team member.
     "actorType": "vendor",
     "role": "manager",
     "name": "Owner Name",
+    "slug": "my-restaurant",
     "restaurantName": "My Restaurant",
     "country": "Austria",
     "phone": "+43 1 2345678",
@@ -510,6 +512,7 @@ Logs in either the vendor owner/manager or an active invited team member.
     "actorType": "team_member",
     "role": "kitchen",
     "name": "Kitchen Staff",
+    "slug": "my-restaurant",
     "restaurantName": "My Restaurant",
     "country": "Austria",
     "phone": null,

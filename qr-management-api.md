@@ -353,7 +353,9 @@ X-Order-Mode: takeaway
    { "token": "b7c2d3e4-f5a6-7890-abcd-ef1234567890" }
    ```
 
-   Do not send `scheduled_for` for takeaway.
+   Do not send `scheduled_for` for takeaway. As a compatibility safeguard, the
+   backend ignores it if a stale client sends one, so every scanned takeaway
+   remains ASAP.
 
 3. The owner receives a four-digit PIN. Another customer can join the same vendor + takeaway + PIN group:
 

@@ -5343,6 +5343,9 @@ X-Order-Mode: takeaway
 }
 ```
 
+`vendor.slug` is guaranteed to be a non-empty, unique URL slug. It is safe to
+use as the customer-app restaurant route segment.
+
 An invalid vendor identifier, inactive/missing takeaway QR, or stale takeaway token returns `410`:
 
 ```json
@@ -5390,7 +5393,7 @@ Content-Type: application/json
 }
 ```
 
-`scheduled_for` is nullable, must not be in the past, and is used only by pickup clients. Retrying for the same customer, vendor, and mode reuses their active session; when `scheduled_for` is present, it updates that session's schedule.
+`scheduled_for` is nullable, must not be in the past, and is used only by pickup clients. Retrying for the same customer, vendor, and mode reuses their active session; when `scheduled_for` is present, it updates that session's schedule. Takeaway QR sessions are always persisted as ASAP; the server ignores `scheduled_for` if a stale client sends it with `X-Order-Mode: takeaway`.
 
 **Response (201):**
 
@@ -5578,4 +5581,4 @@ Mutation responses and notifications continue to carry the authoritative `metada
 
 ### 10.12 Legacy Compatibility Routes
 
-`/api/customer/pickup/status`, `/api/customer/pickup/scan`, `/api/customer/pickup/session/status`, and `/api/customer/pickup/close` remain registered for compatibility with older clients. New pickup and takeaway clients must use the shared `/table/*`, `/cart/*`, and `/payments/*` routes documented above so PIN groups, draft-until-paid behavior, scheduling, sharing, and realtime scope remain consistent.
+`/api/customer/pickup/status`, `/api/customer/pickup/scan`, `/api/customer/pickup/session/status`, and `/api/customer/pickup/close` remain registered for compatibility with older clients. `GET /api/customer/pickup/status?token={token}` returns a non-null `vendor.slug` and `type: "takeaway"`. New pickup and takeaway clients must use the shared `/table/*`, `/cart/*`, and `/payments/*` routes documented above so PIN groups, draft-until-paid behavior, scheduling, sharing, and realtime scope remain consistent.
