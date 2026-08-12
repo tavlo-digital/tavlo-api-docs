@@ -42,6 +42,7 @@ Returns the full vendor settings object for a single vendor.
   "isLiveAndDiscoverable": true,
   "businessHours": { "monday": { "open": "09:00", "close": "22:00", "isOpen": true }, "...": "..." },
   "acceptOnSite": true,
+  "acceptPickupCash": true,
   "stripeEnabled": false,
   "stripeAccountId": null,
   "stripeOnboardingComplete": false,
@@ -131,6 +132,7 @@ Updates one or more vendor settings fields. Only supplied fields are updated (pa
   "isLiveAndDiscoverable": true,
   "businessHours": { "monday": { "open": "10:00", "close": "23:00", "isOpen": true } },
   "acceptOnSite": false,
+  "acceptPickupCash": false,
   "stripeEnabled": true,
   "serviceFeeRate": 5,
   "autoGenerateReceipts": true,
@@ -150,6 +152,31 @@ Returns the full settings object (same shape as GET).
 
 The update endpoint does not accept or persist `currency`. Updating map
 coordinates (`latitude` and `longitude`) does not change currency.
+
+### Payment Setting Rules
+
+- `acceptOnSite` enables payment at the restaurant and is the parent setting
+  for `acceptPickupCash`.
+- `acceptPickupCash` allows pickup and takeaway customers to request cash
+  payment at collection.
+- Sending `acceptOnSite: false` always stores and returns
+  `acceptPickupCash: false`, even if a stale client also sends
+  `acceptPickupCash: true`.
+- If on-site payments are already disabled, a partial update that attempts to
+  enable only `acceptPickupCash` returns `422`.
+
+### Response `422 Unprocessable Content` (pickup-cash dependency)
+
+```json
+{
+  "message": "Pickup cash can only be enabled when on-site payments are enabled.",
+  "errors": {
+    "acceptPickupCash": [
+      "Pickup cash can only be enabled when on-site payments are enabled."
+    ]
+  }
+}
+```
 
 ### Local Formatting Rules
 - `dateFormat`: `DD.MM.YYYY`, `MM/DD/YYYY`, or `YYYY-MM-DD`.

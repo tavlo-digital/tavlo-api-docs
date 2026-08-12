@@ -3583,6 +3583,10 @@ Returns the customer-facing payment methods currently available for a restaurant
 
 **Authentication:** public route; no Bearer token required.
 
+**Order-mode header:** Send `X-Order-Mode: pickup` or
+`X-Order-Mode: takeaway` when checking payment methods for an off-premise
+order. Omit the header for dine-in.
+
 **Query Parameters:**
 
 | Parameter          | Type   | Required | Description                                                                       |
@@ -3603,7 +3607,12 @@ Returns the customer-facing payment methods currently available for a restaurant
 
 **Rules:**
 
-- `method["on-site"]` mirrors `vendor_settings.accept_on_site`.
+- For dine-in, `method["on-site"]` mirrors
+  `vendor_settings.accept_on_site`.
+- For pickup and takeaway, the compatibility key `method["on-site"]` is `true`
+  only when both `accept_on_site` and `accept_pickup_cash` are enabled.
+  Pickup cash is a child option of on-site payments, so disabling on-site
+  payments also disables cash at collection.
 - `method.stripe` is `true` only when `stripe_enabled = true`, `stripe_account_id` is present, and `stripe_onboarding_complete = true`.
 
 **Response (422):**
@@ -3826,6 +3835,10 @@ Requests a cash payment for every order payable by the authenticated customer in
 - Includes all eligible unpaid orders assigned to the payer in the same active group. Pickup/takeaway drafts are eligible; dine-in orders must be confirmed or later.
 - Rejects if any session has unsubmitted cart items (HTTP `422`).
 - Rejects if total amount is zero or negative (HTTP `422`).
+- Rejects dine-in cash when the vendor's on-site payment setting is disabled.
+- Rejects pickup/takeaway cash unless both the on-site payment and pickup-cash
+  settings are enabled. This server-side check prevents a stale or modified
+  client from bypassing the payment-method response.
 - Creates one `order_payments` row with `status: 'cash_requested'`, `payment_method: 'cash'`, and `notes` in metadata.
 - Updates each covered order: `payment_method = 'cash'`, `payment_pending = true`, and sets `tip_amount` on the payer's own order.
 - Sends a `payment_updated` notification to all customers at the table and to waiter/vendor staff.
@@ -3860,6 +3873,22 @@ For pickup/takeaway, the response message is `Cash payment requested. Please pay
 
 ```json
 { "message": "Order is already paid." }
+```
+
+**Response (422) — pickup/takeaway cash disabled:**
+
+```json
+{
+    "message": "Cash payment is not available for pickup orders at this restaurant."
+}
+```
+
+**Response (422) — dine-in on-site payment disabled:**
+
+```json
+{
+    "message": "On-site payment is not available at this restaurant."
+}
 ```
 
 ---
@@ -5512,6 +5541,11 @@ All routes below require `X-Order-Mode: pickup` or `X-Order-Mode: takeaway`:
 For pickup/takeaway, pay-for eligibility includes unpaid drafts. The same pricing, item-sharing, payer assignment, idempotency, and `state_patch` rules documented in [§3.18](#318-update-order-) and [§4.4.1–4.4.2](#441-assign-a-tablemates-order-for-payment) apply to the mode-scoped PIN group.
 
 ### 10.8 Card and Cash Payment 🔒
+
+Before presenting payment choices, call
+`GET /api/customer/payment-methods?restaurant_id={restaurant_id}` with the
+same `X-Order-Mode` header. For pickup/takeaway, cash is available only when
+both the vendor's on-site payment and pickup-cash settings are enabled.
 
 The existing payment endpoints are shared by all modes:
 

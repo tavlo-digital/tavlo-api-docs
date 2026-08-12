@@ -817,7 +817,7 @@ Returns `422` if already on `desserts`.
 
 ### `POST /api/vendor/{vendorId}/sessions/{sessionId}/close`
 
-Closes a legacy `table_sessions` record. New waiter flows should use the table-scan endpoint documented in `documentation/qr-management-api.md`:
+Closes a legacy `table_sessions` record. New waiter flows should use the table-scan endpoint documented in `qr-management-api.md`:
 
 `POST /api/vendor/{vendorId}/tables/{tableId}/close-session`
 
@@ -851,6 +851,10 @@ This legacy endpoint sets `status → closed` and records `closedAt` on the requ
     "name": "Jane Smith",
     "email": "jane@example.com",
     "phone": "+43 660 1234567"
+  },
+  "paidBy": {
+    "id": "21",
+    "name": "Alex Miller"
   },
   "status": "in_progress",
   "displayStatus": "in_progress",
@@ -914,6 +918,10 @@ This legacy endpoint sets `status → closed` and records `closedAt` on the requ
 ```
 
 **Notes:**
+- `customer` identifies the order owner. `paidBy` is `null` unless another
+  customer has explicitly taken responsibility through the pay-for flow. When
+  present, waiter clients should attribute the order and its items to that
+  payer; both identities expose stable string IDs.
 - `itemsCount` is computed live as the sum of `quantity` across linked cart_items.
 - `items[]` is built live from `cart_items` (owned by the order's session, plus any cart_item whose `shared_order_ids` JSON contains the order id).
 - Item `status` is derived from `picked_up_at`, `served_at`, `ready_at`, and `preparing_start_at`: `picked_up`, `served`, `ready`, `in_progress`, or `new`.
