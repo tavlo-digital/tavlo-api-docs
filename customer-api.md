@@ -2438,10 +2438,15 @@ Creates a `draft` order for the authenticated customer's active order session. T
 **Body:**
 
 ```json
-{}
+{
+    "note": "Please pack sauces separately."
+}
 ```
 
-No request body is required.
+The request body is optional. `note` is a nullable string with a maximum length
+of 500 characters and is stored in `orders.note`. Omitting `note` preserves the
+current value when the endpoint refreshes an existing order. Sending
+`"note": null` clears it.
 
 **Response (201):** unified table-view payload — see [§4.1 Get Current Table History](#41-get-current-table-history) for the full shape.
 
@@ -2666,7 +2671,7 @@ command IDs.
 
 > **Dine-in only:** Pickup and takeaway clients must not call this route. They create a draft and let successful card payment or vendor/waiter cash confirmation confirm it; see [§10.2](#102-lifecycle-and-payment-gate).
 
-Confirms the authenticated customer's open order for the active table session. **No request body is accepted.** The endpoint recomputes the final `amount`, updates a draft order to `status = "confirmed"`, and binds currently open owned cart rows by setting `cart_items.order_id`.
+Confirms the authenticated customer's open order for the active table session. The endpoint recomputes the final `amount`, updates a draft order to `status = "confirmed"`, and binds currently open owned cart rows by setting `cart_items.order_id`. It also accepts an optional order-level note.
 
 If no draft or submitted order exists, the endpoint **auto-creates a draft order** from the customer's open cart items and immediately confirms it — callers do not need to call the draft endpoint first.
 
@@ -2677,8 +2682,17 @@ If the same customer already has another unpaid, non-cancelled submitted order f
 **Body:**
 
 ```json
-{}
+{
+    "note": "Allergy: no peanuts."
+}
 ```
+
+The request body is optional. `note` is a nullable string with a maximum length
+of 500 characters and is stored in `orders.note`. If omitted, an existing draft
+or submitted order keeps its current note. Sending `"note": null` clears it. If
+confirmation merges a draft into an existing unpaid submitted order, an
+explicit request note takes precedence; otherwise a draft note is retained when
+the submitted order has no note.
 
 **Total computation (from `cart_items`):**
 
@@ -2773,6 +2787,7 @@ This is the **canonical "table view" response**. Order draft and confirmation fl
                     "payment_received": false,
                     "payment_confirmed_at": null,
                     "payment_note": null,
+                    "note": "Allergy: no peanuts.",
                     "transaction_id": null,
                     "served_at": null,
                     "cancelled_at": null,
@@ -2915,6 +2930,8 @@ For a given order `O` in `people[].orders[]`, an item appears in its `items[]` i
 **Notes:**
 
 - `people[].orders` is ordered oldest-to-newest by `created_at`, then `id`, and is always an array.
+- `people[].orders[].note` is the nullable customer-supplied order note. It is
+  separate from `payment_note`, which records payment-collection information.
 - The columns `items_count`, `items`, `shared_items`, `ready_at`, `picked_up_at`, and `guest_count` no longer exist on `orders`. Per-item state lives on `cart_items` (`order_id`, `shared_order_ids`, `preparing_start_at`, `ready_at`, `served_at`); per-order amount is recomputed on confirm.
 - `name` falls back to `"Guest"` if the customer has no name set.
 
