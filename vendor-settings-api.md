@@ -153,6 +153,22 @@ Returns the full settings object (same shape as GET).
 The update endpoint does not accept or persist `currency`. Updating map
 coordinates (`latitude` and `longitude`) does not change currency.
 
+### Keys That Differ Between Request and Response
+
+Most fields use the same name in both directions. These do not — sending the
+response name on update is silently ignored, because unknown keys are dropped
+by validation rather than rejected:
+
+| Send on `PUT` | Returned by `GET` |
+|---------------|-------------------|
+| `totalTablesForReservations` | `totalTables` |
+| `logoUrl` | `logo` |
+| `coverPhotoUrl` | `coverPhoto` |
+
+`logoUrl`, `coverPhotoUrl`, and `backgroundImageUrl` are normally written by
+their dedicated upload endpoints. Send them on `PUT` only as `null`, to clear
+an image; passing a full URL back stores that URL verbatim.
+
 ### Payment Setting Rules
 
 - `acceptOnSite` enables payment at the restaurant and is the parent setting
@@ -271,7 +287,40 @@ Returned when the image is not 16:9 or is smaller than the 1200 × 675 px minimu
 
 ---
 
-## 5. Submit Legal Info for Approval
+## 5. Upload Background Image
+
+**`POST /vendor/{vendorId}/settings/background-image`**
+
+Uploads a menu background image. Previous background image is replaced.
+
+### Path Parameters
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `vendorId` | string | Vendor public ID or numeric ID |
+
+### Request
+`Content-Type: multipart/form-data`
+
+| Field | Type | Constraints |
+|-------|------|-------------|
+| `background` | file | Required. jpg, jpeg, png, or webp. Max 5 MB. |
+
+### Response `200 OK`
+```json
+{
+  "backgroundImageUrl": "https://storage.example.com/vendors/1/background/bg.jpg"
+}
+```
+
+To remove the background image, send `"backgroundImageUrl": null` to
+`PUT /vendor/{vendorId}/settings`.
+
+### Error Responses
+- `422` — Validation failed (wrong MIME type or size exceeded)
+
+---
+
+## 6. Submit Legal Info for Approval
 
 **`POST /vendor/{vendorId}/legal-info`**
 
@@ -332,7 +381,7 @@ Returned when an existing pending request is updated.
 
 ---
 
-## 6. Get Legal Change Request Status
+## 7. Get Legal Change Request Status
 
 **`GET /vendor/{vendorId}/legal-info/status`**
 
@@ -371,7 +420,7 @@ Returns `null` if no requests exist.
 
 ---
 
-## 7. Export Vendor Data
+## 8. Export Vendor Data
 
 **`GET /vendor/{vendorId}/settings/export`**
 
@@ -394,7 +443,7 @@ Response includes `Content-Disposition: attachment; filename="vendor-{vendorId}-
 
 ---
 
-## 8. Get Subscription
+## 9. Get Subscription
 
 **`GET /vendor/{vendorId}/subscription`**
 
@@ -417,7 +466,7 @@ Returns `null` if no active subscription.
 
 ---
 
-## 9. Stripe Connect — Create Account
+## 10. Stripe Connect — Create Account
 
 **`POST /vendor/{vendorId}/stripe/connect`**
 
@@ -436,7 +485,7 @@ Creates a Stripe Express account for the vendor. If an account already exists, r
 
 ---
 
-## 10. Stripe Connect — Get Onboarding Link
+## 11. Stripe Connect — Get Onboarding Link
 
 **`POST /vendor/{vendorId}/stripe/onboarding-link`**
 
@@ -462,7 +511,7 @@ Generates a Stripe account onboarding URL to redirect the vendor to complete set
 
 ---
 
-## 11. Stripe Connect — Get Account Status
+## 12. Stripe Connect — Get Account Status
 
 **`GET /vendor/{vendorId}/stripe/status`**
 
@@ -489,7 +538,7 @@ When not connected:
 
 ---
 
-## 12. Vendor Login and Current User Shape
+## 13. Vendor Login and Current User Shape
 
 ### `POST /vendor/login`
 
@@ -600,7 +649,7 @@ Changes the authenticated vendor owner or staff user's password. Staff users, in
 
 ---
 
-## 13. Team Access
+## 14. Team Access
 
 Team management endpoints are owner/manager-only. Staff users cannot call them. The vendor owner is not stored as a `team_members` record; the frontend displays the owner as **Manager / full access** from the logged-in vendor user.
 

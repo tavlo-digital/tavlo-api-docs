@@ -484,6 +484,7 @@ Content-Type: application/json
   "fat": 22.0,
   "carbs": 12.0,
   "protein": 14.0,
+  "manualNutritionOverride": true,
   "taxCategoryId": 1,
   "dietaryPreference": "vegetarian",
   "allergenIds": [2],
@@ -525,6 +526,7 @@ Content-Type: application/json
 | `fat` | float | No | Default: `0` |
 | `carbs` | float | No | Default: `0` |
 | `protein` | float | No | Default: `0` |
+| `manualNutritionOverride` | boolean | No | Preserves whether nutrition values are manually maintained instead of recipe-calculated |
 | `taxCategoryId` | integer | No | FK to tax_categories. Inherits from category if omitted |
 | `dietaryPreference` | string | No | e.g. "vegan", "vegetarian", "pescetarian" |
 | `allergenIds` | array[int] | No | Array of allergen IDs from `/api/vendor/allergens` |
@@ -553,6 +555,8 @@ Content-Type: application/json
 
 Creates or updates up to 500 menu items from a vendor-side CSV/XLSX import. Authentication is required. Existing active items are matched case-insensitively by `name` within the resolved vendor category. Each row is committed independently, so an invalid row does not roll back successful rows.
 
+The vendor dashboard accepts and downloads the full `tavlo-menu-items-full-import-template.xlsx` structure. Its first row contains merged section headings, its second row contains the 46 import column names, and menu data starts on row 3. The importer automatically detects and skips the grouped heading row.
+
 Updates use the same versioning rules as `PATCH /api/vendor/menu/items/{itemId}`. Price, tax, or discount changes therefore create a new item version and preserve historical orders. Optional fields omitted from an existing row remain unchanged.
 
 **Request:**
@@ -576,11 +580,31 @@ Content-Type: application/json
       "fat": 20,
       "carbs": 90,
       "protein": 28,
+      "manualNutritionOverride": true,
       "taxCategory": "food",
       "dietaryPreference": "vegetarian",
       "allergies": ["gluten", "dairy"],
       "specialTags": ["popular"],
-      "discountPercent": 10
+      "hasDiscount": true,
+      "discountPercent": 10,
+      "translations": {
+        "en": { "name": "Margherita Pizza", "description": "Tomato, mozzarella, and basil" },
+        "de": { "name": "Pizza Margherita" }
+      },
+      "ingredients": [
+        { "ingredientName": "Tomatoes", "quantity": 0.2, "isCritical": true }
+      ],
+      "modifierGroupNames": ["Choose a Size"],
+      "paidAddons": [
+        {
+          "name": "Extra Cheese",
+          "price": 2.5,
+          "taxCategory": "food",
+          "translations": { "de": { "name": "Extra Käse" } }
+        }
+      ],
+      "freeAddons": [{ "name": "Ketchup", "translations": {} }],
+      "removableItems": [{ "name": "Onion", "translations": { "de": { "name": "Zwiebel" } }]
     }
   ]
 }
@@ -598,11 +622,39 @@ Content-Type: application/json
 | `items[].fat` | number | No | Non-negative grams |
 | `items[].carbs` | number | No | Non-negative grams |
 | `items[].protein` | number | No | Non-negative grams |
+| `items[].manualNutritionOverride` | boolean | No | Whether imported nutrition values are a manual override |
 | `items[].taxCategory` | string | No | Tax category slug |
 | `items[].dietaryPreference` | string\|null | No | Active dietary preference slug |
 | `items[].allergies` | string[] | No | Allergen keys |
 | `items[].specialTags` | string[] | No | Special-tag slugs |
 | `items[].discountPercent` | number | No | 0-100; values above 0 enable the discount and 0 disables it |
+| `items[].hasDiscount` | boolean | No | Explicitly enables/disables the discount; takes precedence over automatic inference from percentage |
+| `items[].translations` | object | No | Language-keyed item names and descriptions |
+| `items[].imageUrl` | string | No | External menu-item image URL |
+| `items[].ingredients` | array | No | Recipe ingredients resolved against this vendor's inventory by ID or case-insensitive name |
+| `items[].modifierGroupNames` | string[] | No | Existing active modifier groups resolved by base or translated name |
+| `items[].paidAddons` | array | No | Paid add-ons with names, prices, optional tax category, and translations |
+| `items[].freeAddons` | array | No | Free add-ons with translations |
+| `items[].removableItems` | array | No | Removable ingredients/options with translations |
+
+### Full XLSX column layout
+
+| Section | Columns |
+|---|---|
+| Basic Details | `Item Name (EN) *`, item names for `DE`, `AR`, `ZH`, `ES`, `Category *`, `Availability`, descriptions for all five languages, `Image URL` |
+| Pricing & Discount | `Price (EUR) *`, `Has Discount`, `Discount %` |
+| Tax | `Tax Category` |
+| Dietary & Allergens | `Dietary Preference`, `Allergens`, `Special Tags` |
+| Nutrition | `Calories (kcal)`, `Fat (g)`, `Carbs (g)`, `Protein (g)`, `Manual Nutrition Override` |
+| Recipe & Ingredients | `Ingredient 1 Name`, `Ingredient 1 Quantity per Serving`, `Ingredient 1 Critical` |
+| Modifier Groups | `Modifier Group Names` |
+| Paid Add-ons | Paid add-on names for `EN`, `DE`, `AR`, `ZH`, `ES`, `Paid Add-on Price (EUR)`, `Paid Add-on Tax Category` |
+| Free Add-ons | Free add-on names for `EN`, `DE`, `AR`, `ZH`, `ES` |
+| Removable Items | Removable names for `EN`, `DE`, `AR`, `ZH`, `ES` |
+
+Multiple ingredients, modifier groups, or add-ons in one cell use semicolons. Aligned columns must contain the same number of values. For example, `Beef Patty;Cheddar`, `0,5;1`, and `Yes;No` create two recipe links. A single paid-add-on tax category applies to every paid add-on; otherwise provide one semicolon-separated tax category per add-on.
+
+Category, inventory ingredient, and modifier-group references must already exist for the authenticated vendor. Matching is case-insensitive and includes localized category/modifier names. Display labels such as `Food`, `Vegan`, `Gluten`, and `Popular` are normalized to their API slugs/keys during import.
 
 **Response `200`:**
 ```json
