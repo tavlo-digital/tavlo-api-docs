@@ -573,6 +573,7 @@ Content-Type: application/json
     {
       "name": "Margherita Pizza",
       "category": "Main Courses",
+      "categoryId": 26,
       "price": 12.5,
       "description": "Tomato, mozzarella, and basil",
       "available": true,
@@ -614,7 +615,8 @@ Content-Type: application/json
 |-------|------|----------|-------------|
 | `items` | array | **Yes** | 1-500 menu item rows |
 | `items[].name` | string | **Yes** | Item name, max 255 characters |
-| `items[].category` | string | **Yes** | Existing vendor category name; matching is case-insensitive and includes localized category names |
+| `items[].categoryId` | integer | Recommended | Vendor category ID already validated by the dashboard preview; takes precedence over `category` when supplied |
+| `items[].category` | string | Yes, when `categoryId` is omitted | Existing vendor category name; matching is case-insensitive and includes master and vendor-localized category names |
 | `items[].price` | number | **Yes** | Net item price, minimum 0 |
 | `items[].description` | string | No | Description, max 5000 characters |
 | `items[].available` | boolean | No | Availability; omitted values stay unchanged on update and default to true on create |
