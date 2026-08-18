@@ -323,6 +323,17 @@ Returns orders split into two groups:
 }
 ```
 
+**Off-premise recency window:**
+
+The `takeaway` group is not full history. An order is returned when either condition holds:
+
+| Condition | Returned |
+|---|---|
+| Status is anything other than `picked_up` or `cancelled` | Always, regardless of age — including pickups scheduled for a future day |
+| Status is `picked_up` or `cancelled` | Only when `created_at` falls on the vendor's current local day |
+
+The day boundary is the vendor's own timezone (`VendorDateTimeService::vendorNow`), not UTC. This keeps completed service history from accumulating in the list indefinitely while guaranteeing that no order still awaiting collection can drop off a staff screen. Dine-in `sessions` are unaffected — they are already bounded by active scan sessions.
+
 Actor-specific visibility:
 
 - Vendor owners and waiters receive submitted off-premise orders immediately. Paid orders are confirmed; a cash-requested order remains a visible `draft` with `paymentPending: true` until cash is confirmed.

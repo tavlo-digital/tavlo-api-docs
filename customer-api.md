@@ -2277,6 +2277,18 @@ Update quantity or notes on an item the customer owns.
 
 **Response (404):** if the item does not belong to the customer's current session.
 
+**Response (409):** if the item has already been submitted, or its order is
+locked. An order is locked once somebody has committed to paying for it —
+another guest covers it (`paid_by`), a payment is in progress
+(`payment_pending`), or it is settled. Items shared into a locked order are
+locked too, because editing them would change a total already being paid.
+
+```json
+{
+    "message": "This item is locked while its order is being paid."
+}
+```
+
 #### 3.14.4 Remove Item
 
 **DELETE** `/api/customer/cart/items/{id}`
@@ -2286,6 +2298,23 @@ Removes an item owned by the current session.
 **Response (204):** empty.
 
 **Response (404):** if the item does not belong to the customer's current session.
+
+**Response (409):** same lock rule as Update Item above.
+
+#### 3.14.5 Locked Orders and the Cart
+
+Once an order locks, its cart items are bound to it so that later additions
+cannot join an order that is already being paid:
+
+- **New items open a new order.** A locked order is never reused, so the next
+  add starts a fresh draft.
+- **Repeat items become a new line.** Adding a menu item that already exists on
+  a locked order creates a separate line instead of incrementing the locked one.
+- **Items stay visible.** `GET /api/customer/cart` still returns items bound to
+  a draft order, so the customer keeps seeing what they added while somebody
+  else pays for it. Only editing is blocked.
+- **Releasing restores the cart.** When coverage is released or the payment is
+  cancelled, the items return to the open cart and behave normally again.
 
 ---
 
