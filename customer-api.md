@@ -2104,6 +2104,8 @@ Returns all visible open cart items per person at the same table. Draft orders d
                     "vat_rate": 10,
                     "vat_amount": 1.0,
                     "line_total": 11.0,
+                    "shared_between": 1,
+                    "my_share": 11.0,
                     "menu_item": {
                         "id": 42,
                         "name": "Fries",
@@ -2309,10 +2311,38 @@ cannot join an order that is already being paid:
 - **New items open a new order.** A locked order is never reused, so the next
   add starts a fresh draft.
 - **Repeat items become a new line.** Adding a menu item that already exists on
-  a locked order creates a separate line instead of incrementing the locked one.
+  a locked line creates a separate line instead of incrementing the locked one.
+  This holds for both kinds of lock — a line bound to a covered order, and a
+  line another guest has split with `shared_item`. Whoever is paying agreed to
+  the quantity they saw, so the line is frozen at it; the new line is fully
+  editable and belongs to its owner alone.
+- **A draft is priced from its guest's cart.** An open draft implicitly owns
+  every unassigned cart item in its session, so `amount` and `service_fee`
+  count those lines plus any share taken into the order. They are counted from
+  the moment the draft exists — not only once it is confirmed or locked, which
+  is when the items actually get an `order_id`.
+- **An open draft's amount is computed, not stored.** In
+  `GET /api/customer/table/history`, `orders[].amount` and
+  `orders[].service_fee` for an unpaid, unlocked draft are priced from the very
+  `items` array returned beside them, so the two can never disagree — a stored
+  amount only reflects the last write that re-priced it, and any cart edit
+  since leaves it behind. Submitted and settled orders return their stored
+  amount: that is what the customer was quoted and charged. `people[].totals`
+  and `total_amount` follow the same figures.
 - **Items stay visible.** `GET /api/customer/cart` still returns items bound to
   a draft order, so the customer keeps seeing what they added while somebody
   else pays for it. Only editing is blocked.
+- **A shared line is billed as a share.** Each item carries `shared_between`
+  (1 when nobody else has taken a share) and `my_share` — `line_total` divided
+  by `shared_between`. `totals` are built from `my_share`, not `line_total`, so
+  a client that renders `line_total` on a split line shows a number the cart
+  total does not add up to.
+- **Shares never hide a line.** A line leaves its owner's `personal_items` only
+  once the owner's *own* order is submitted. Another guest taking a share of it
+  — including a share that lands on the `confirmed` side order opened for a
+  guest whose order is covered — leaves it in the owner's cart, since the owner
+  still owes their part of it. `totals` count the owner's share, not the full
+  line.
 - **Releasing restores the cart.** When coverage is released or the payment is
   cancelled, the items return to the open cart and behave normally again.
 
@@ -4149,6 +4179,95 @@ When no active intent remains, the idempotent response is `canceled: false`; `st
 
 ---
 
+### 4.8.2 Checkout Hold
+
+A checkout hold is the claim a customer takes on the orders they are about to
+settle, from the moment they open the payment step — before any Stripe intent
+or cash request exists.
+
+Without it the table stays editable behind the payer: another guest can cover
+the same order or split one of its items, and the total on the payer's screen
+quietly stops matching what they are about to be charged. A Stripe intent used
+to be the only thing that locked anything, so a **cash checkout locked nothing
+at all**.
+
+A hold sets `payment_pending` on every order it covers, so every existing guard
+and lock banner applies unchanged: pay-for and share/unshare on those orders
+answer `409`, and their cart lines are read-only for the rest of the table. The
+holder is unaffected — they can still create an intent, request cash, and
+re-take their own hold.
+
+A hold ends when the payer goes back (below), when the payment completes,
+fails, or is cancelled, or after **10 minutes**, swept by
+`payments:release-stale-checkout-holds`, so an abandoned checkout cannot lock a
+table indefinitely.
+
+It also freezes the coverage on the holder's **own** orders, even the ones
+somebody else is covering and which are therefore not in the hold: their total
+is built from what they still owe and what is covered for them, so
+`DELETE /payments/pay-for/{orderId}` answers `409` — *"This order is locked
+while its owner is checking out."* — until they are done. Orders carry
+`checkout_hold_by` (the customer holding them, or `null`) in the history
+payload, order snapshots and state patches, so clients can show the lock
+instead of letting a guest tap into a refusal.
+
+**POST** `/api/customer/payments/checkout-hold`
+
+Claims the same order set `create-intent` would charge: the customer's own
+unpaid orders at the table plus every order they cover.
+
+**Authentication:** required (Bearer token).
+
+**Request body:** none.
+
+**Response (200):**
+
+```json
+{
+    "held": [42, 43],
+    "expires_in_minutes": 10
+}
+```
+
+**Response (409):** another guest holds one of the orders, or a payment of
+theirs is already in progress.
+
+```json
+{ "message": "Bob Jones is checking out these items right now. Please try again in a moment." }
+```
+
+**Response (422):** the customer has no unpaid orders to pay for.
+
+**DELETE** `/api/customer/payments/checkout-hold`
+
+The way back out of the payment step: cancels the customer's Stripe intent if
+one was created, drops their hold, and broadcasts the unlock to the table. Use
+this rather than `DELETE /payments/intent`, which only knows about intents and
+therefore leaves a cash checkout's hold in place.
+
+**Response (200):**
+
+```json
+{
+    "released": [42, 43],
+    "state_patch": {
+        "id": "019b10de-35a8-7540-9258-42530b931761",
+        "version": 1784123456795000,
+        "operation": "payment.canceled",
+        "orders": { "upsert": [], "remove_ids": [] },
+        "items": { "upsert": [], "remove_ids": [] }
+    }
+}
+```
+
+**Response (409):**
+
+```json
+{ "message": "A payment is currently processing and cannot be canceled." }
+```
+
+---
+
 ### 4.9 Stripe Payment Webhook
 
 **POST** `/api/customer/payments/webhook`
@@ -5601,6 +5720,8 @@ The existing payment endpoints are shared by all modes:
 | `POST` | `/api/customer/payments/update-intent` | Add/update the tip |
 | `GET` | `/api/customer/payments/intent` | Get the active intent |
 | `DELETE` | `/api/customer/payments/intent` | Cancel an eligible active intent |
+| `POST` | `/api/customer/payments/checkout-hold` | Claim the orders being settled while the payment step is open |
+| `DELETE` | `/api/customer/payments/checkout-hold` | Release the claim and cancel the intent (checkout "back") |
 | `GET` | `/api/customer/payments/verify?payment_intent={id}` | Verify and synchronize payment |
 | `POST` | `/api/customer/payments/request-cash` | Request cash collection for payable group orders |
 
