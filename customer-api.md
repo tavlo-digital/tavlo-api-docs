@@ -1087,9 +1087,104 @@ Returns all active menu categories across discoverable restaurants (deduplicated
 
 ---
 
+### 3.2b Session History 🔒
+
+**GET** `/api/customer/sessions`
+
+Every scan session the authenticated customer owns, newest first — dine-in,
+pickup and takeaway alike, active and closed.
+
+Deliberately **unfiltered**: it reports what the database holds, not what is
+payable or served. Orders of every status appear (including `draft` and
+`cancelled`), and a session that never got as far as an order still reports the
+cart rows the guest had added, under `unplaced_items`. Only the customer's own
+sessions are ever returned.
+
+`status` is `active` or `closed` — those are the only two values the
+`table_scan_sessions` table stores. There is no separate "expired" status; a
+session abandoned long enough is closed by the `sessions:close-stale` sweeper
+and appears as `closed` with a `closed_at`.
+
+`can_close` and `close_blocked_reason` are evaluated with the **same rules** the
+in-flow close uses (`SessionClosureService`), so a client can disable its button
+and show the real reason without guessing. They are computed only for active
+sessions; a closed one reports `can_close: false` and a `null` reason.
+
+**Response (200):**
+
+```json
+{
+    "sessions": [
+        {
+            "id": 42,
+            "status": "active",
+            "type": "pickup",
+            "is_off_premise": true,
+            "pin": "3140",
+            "table_number": null,
+            "vendor": { "vendor_public_id": "VID-8492", "slug": "bella-italia", "name": "Bella Italia GmbH" },
+            "scanned_at": "2026-08-30T18:04:11.000000Z",
+            "closed_at": null,
+            "scheduled_for": null,
+            "can_close": false,
+            "close_blocked_reason": "This order group still has unpaid orders.",
+            "order_count": 1,
+            "item_count": 2,
+            "orders": [
+                {
+                    "id": 77,
+                    "order_public_id": "ord-aB3xK9pQrS12",
+                    "status": "confirmed",
+                    "amount": 9.79,
+                    "tip_amount": 0,
+                    "currency": "EUR",
+                    "payment_received": false,
+                    "payment_pending": false,
+                    "payment_method": null,
+                    "created_at": "2026-08-30T18:05:02.000000Z",
+                    "items": [
+                        { "cart_item_id": 5, "name": "Bruschetta al Pomodoro", "quantity": 2, "notes": null, "status": "new", "served_at": null }
+                    ]
+                }
+            ],
+            "unplaced_items": []
+        }
+    ]
+}
+```
+
+An item whose menu item has since been deleted keeps its row with `"name": null` —
+it is still part of that session's history.
+
+**POST** `/api/customer/sessions/{session}/close`
+
+Closes the whole group the session belongs to, exactly as closing from inside the
+ordering flow does and under the same rules.
+
+**Response (200):** `{"message": "Session closed.", "closed_session_ids": [42, 43]}`
+
+**Response (404):** the session does not exist or belongs to another customer.
+
+**Response (422):** already closed, or a close rule refused it — the `message` is
+the rule's own text (`There is an active order on this table.`,
+`All the items on table are not served.`, `This order group still has unpaid orders.`).
+
+---
+
 ### 3.3 Restaurant Profile
 
 **GET** `/api/customer/restaurants/{vendorPublicId}`
+
+> **`{vendorPublicId}` accepts either public identifier.** Every
+> `/customer/restaurants/{vendorPublicId}` route — this one, `/categories`,
+> `/menu`, `/menu/{itemId}`, `/reviews`, `/about`, `/tables`, `/languages` —
+> resolves the vendor by `vendor_public_id` **or** `slug`. Both columns are
+> unique, `NOT NULL` and indexed, and both are returned in public payloads, so
+> both end up in links people keep and QR codes vendors print; resolving only
+> one turned a valid link into a 404 the app could only show as "restaurant not
+> found". Clients should still emit `vendor_public_id` as the canonical form —
+> one identifier per restaurant keeps client caches, analytics and canonical
+> URLs from splitting in two. An identifier matching neither is still a `404`.
 
 **Query Parameters (optional):**
 
@@ -2047,7 +2142,7 @@ with HTTP `422`.
 
 **GET** `/api/customer/cart`
 
-Returns all visible open cart items per person at the same table. Draft orders do **not** bind or hide cart rows: items remain visible while the customer is still reviewing or sharing a draft. When an order is confirmed, the customer's open cart rows are bound to that order through `cart_items.order_id` and disappear from the open cart. Newly added items after confirmation stay open (`order_id = null`) until the customer confirms the open order again or starts/confirms a new order after payment.
+Returns all visible open cart items per person at the same table. Draft orders do **not** bind or hide cart rows while customers are reviewing, sharing, or assigning a step-1 payer. A draft's rows are bound to `cart_items.order_id` only when checkout/payment step 2 freezes it. When an order is confirmed, the customer's open cart rows are also bound to that order and disappear from the open cart. Newly added items after confirmation stay open (`order_id = null`) until the customer confirms the open order again or starts/confirms a new order after payment.
 
 **Response (200):**
 
@@ -2280,10 +2375,11 @@ Update quantity or notes on an item the customer owns.
 **Response (404):** if the item does not belong to the customer's current session.
 
 **Response (409):** if the item has already been submitted, or its order is
-locked. An order is locked once somebody has committed to paying for it —
-another guest covers it (`paid_by`), a payment is in progress
-(`payment_pending`), or it is settled. Items shared into a locked order are
-locked too, because editing them would change a total already being paid.
+locked. An order locks only when checkout/payment step 2 freezes its amount
+(`payment_pending`) or it is settled. Selecting a full-order payer (`paid_by`)
+or sharing one item on payment step 1 does **not** lock the line. Items shared
+into an order that has reached step 2 are locked too, because editing them
+would change a frozen total.
 
 ```json
 {
@@ -2308,14 +2404,16 @@ Removes an item owned by the current session.
 Once an order locks, its cart items are bound to it so that later additions
 cannot join an order that is already being paid:
 
-- **New items open a new order.** A locked order is never reused, so the next
-  add starts a fresh draft.
+- **Step-1 assignments stay editable.** Full-order coverage and single-item
+  sharing update live as the owner adds, increments, edits, or deletes rows.
+  Adding the same item with the same customizations increments its existing
+  row, including when that row is shared.
+- **New items open a new order only after step 2.** A checkout-locked order is
+  never reused, so the next add starts a fresh draft.
 - **Repeat items become a new line.** Adding a menu item that already exists on
   a locked line creates a separate line instead of incrementing the locked one.
-  This holds for both kinds of lock — a line bound to a covered order, and a
-  line another guest has split with `shared_item`. Whoever is paying agreed to
-  the quantity they saw, so the line is frozen at it; the new line is fully
-  editable and belongs to its owner alone.
+  Coverage or sharing alone is not a lock. The separate line is created only
+  after the related order has entered checkout and frozen its amount.
 - **A draft is priced from its guest's cart.** An open draft implicitly owns
   every unassigned cart item in its session, so `amount` and `service_fee`
   count those lines plus any share taken into the order. They are counted from
@@ -2330,8 +2428,8 @@ cannot join an order that is already being paid:
   amount: that is what the customer was quoted and charged. `people[].totals`
   and `total_amount` follow the same figures.
 - **Items stay visible.** `GET /api/customer/cart` still returns items bound to
-  a draft order, so the customer keeps seeing what they added while somebody
-  else pays for it. Only editing is blocked.
+  a checkout-locked draft, so the customer keeps seeing what they added while
+  somebody else pays for it. Controls return when checkout is released.
 - **A shared line is billed as a share.** Each item carries `shared_between`
   (1 when nobody else has taken a share) and `my_share` — `line_total` divided
   by `shared_between`. `totals` are built from `my_share`, not `line_total`, so
@@ -3805,6 +3903,11 @@ Assigns a single eligible order belonging to another customer in the authenticat
 
 If the payer previously shared any item owned by the selected order, those individual share references are removed atomically before full-order coverage is assigned. The returned `state_patch` contains every recalculated order/item and any empty side-order ID that was removed.
 
+This is a **step-1 assignment**, not a cart lock. Until the payer opens payment
+step 2, the owner can add, increment, edit, or delete items and all participants
+see the live quantity/share/total. The exact amount is frozen only by
+`POST /api/customer/payments/checkout-hold` (or intent/cash creation).
+
 On success, every customer with an active session at the table receives an `order_updated` notification identifying the payer and containing the same `state_patch`.
 
 **Response (200):**
@@ -4041,7 +4144,9 @@ Creates one Stripe PaymentIntent covering every payable order in the authenticat
 
 **POST** `/api/customer/payments/update-intent`
 
-Updates an existing Stripe PaymentIntent after the customer chooses a tip. For a grouped payment, the backend recalculates every linked order and stores the full tip on the payer-owned anchor order. A positive tip is rejected when the payment contains only other customers' orders.
+Updates an existing Stripe PaymentIntent after the customer chooses a tip. For a grouped payment, the backend recalculates every linked order and stores the full tip on a single anchor order, so it is counted once.
+
+The anchor is the payer's own order when the payment contains one, otherwise the first order in the payment. A payer settling nothing but other guests' orders **can** still tip — the tip then sits on the covered order, while `order_payments` records who actually paid it. (This previously returned `422`; mutual coverage, where two guests cover each other, left both of them unable to tip at all, because your own order leaves your payable set the moment somebody covers it.)
 
 **Authentication:** required (Bearer token).
 
@@ -4240,10 +4345,26 @@ theirs is already in progress.
 
 **DELETE** `/api/customer/payments/checkout-hold`
 
-The way back out of the payment step: cancels the customer's Stripe intent if
-one was created, drops their hold, and broadcasts the unlock to the table. Use
-this rather than `DELETE /payments/intent`, which only knows about intents and
-therefore leaves a cash checkout's hold in place.
+The way back out of the payment step: cancels every payment this customer
+opened from the checkout — the Stripe intent if one was created, **and a cash
+request, which carries no intent id** — drops their hold, and broadcasts the
+unlock to the table. Use this rather than `DELETE /payments/intent`, which only
+knows about intents and therefore leaves a cash checkout's payment and hold in
+place.
+
+Dropping the hold never clears `payment_pending` on an order some other payment
+still covers. A hold and a payment can both be present — requesting cash from
+the payment step sets `payment_pending` while the hold still stands — and only
+the hold is this endpoint's to release; the payment keeps the order locked until
+it is canceled, confirmed, or expires.
+
+After all of this customer's holds are released, every unpaid `draft` or
+`confirmed` order for the same owner/session that is now editable is merged
+backward into the oldest editable order. A sibling that remains in checkout is
+never merged. Consequently: unlocked + unlocked merges; unlocked + locked
+stays separate; when the last sibling later unlocks, it merges then. Equivalent
+same-item rows are combined and removed order/item IDs appear in the returned
+`state_patch`.
 
 **Response (200):**
 
@@ -4291,6 +4412,13 @@ Receives Stripe PaymentIntent events and keeps `order_payments` and every order 
 
 When the webhook changes customer-visible order state, the `payment_updated` realtime notification contains `metadata.state_patch` with operation `payment.completed`. The Stripe webhook response itself remains the acknowledgement shown above.
 
+A `payment_intent.payment_failed` or `payment_intent.canceled` event unlocks
+every order the intent covered **and merges the session's editable orders back
+together**, exactly as `DELETE /payments/checkout-hold` does. A temporary order
+only exists as a boundary created while an earlier order was frozen, so a
+decline — the one exit the customer never chose — must not leave the table
+looking at two order cards.
+
 **Response (400) — invalid signature:**
 
 ```json
@@ -4335,9 +4463,12 @@ Returns the authenticated participant's order tracking payload. The order must e
     "status": "draft",
     "estimated_delivery_time": "27.11.2025 10:31",
     "total_amount": 25.99,
+    "tip_amount": 2.00,
+    "amount_charged": 27.99,
     "currency": "EUR",
     "order_type": "dine-in",
     "payment_method": null,
+    "paid_by": null,
     "payment_pending": true,
     "payment_received": false,
     "can_view_receipt": false,
@@ -4395,6 +4526,7 @@ Returns the authenticated participant's order tracking payload. The order must e
             "removed_items": [],
             "selected_modifiers": [],
             "shared_between": 2,
+            "owned_by_me": true,
             "shared_with": [
                 {
                     "order_id": 102,
@@ -4421,9 +4553,10 @@ Returns the authenticated participant's order tracking payload. The order must e
             "removed_items": [],
             "selected_modifiers": [],
             "shared_between": 2,
+            "owned_by_me": false,
             "shared_with": [
                 {
-                    "order_id": 101,
+                    "order_id": null,
                     "customer_id": 9,
                     "customer_name": "Bob Jones"
                 }
@@ -4446,17 +4579,28 @@ Returns the authenticated participant's order tracking payload. The order must e
         "net_total": 25.99,
         "vat_total": 2.6,
         "service_fee": 0.0,
-        "grand_total": 28.59
+        "total_tips": 2.0,
+        "grand_total": 30.59
     }
 }
 ```
 
+**Amount rules:**
+
+- `total_amount` is the order amount and already contains the service fee. It does **not** contain the tip.
+- `tip_amount` is the tip the customer chose; `amount_charged` is `total_amount + tip_amount`, which is what they actually paid. Show `amount_charged` wherever the screen claims to say what a guest paid.
+- `totals.service_fee` is the fee stored on the order (the participant's own share of it), `totals.total_tips` mirrors `tip_amount`, and `totals.grand_total` matches `amount_charged`.
+- `paid_by` is `null` unless another customer covers the order; when present the tracking screen must name them.
+
 **Item rules:**
 
-- `items` contains only the cart items that the authenticated participant added to their own cart.
+- `items` contains only the cart items that the authenticated participant added to their own cart. A participant who ordered nothing of their own and only bought into a tablemate's item has an empty `items` and one entry in `shared_items` — clients must render both lists or that guest sees an empty order.
+- A draft's rows are bound to it (`cart_items.order_id`) the moment it locks — requesting cash or starting a checkout both do this — and an *open* draft additionally owns its session's still-unbound rows. A locked draft does not: those belong to the next draft. So a cash-requested draft returns its frozen rows, not an empty `items`.
 - `shared_items` is empty by default.
 - `shared_items` contains an owned item only when that participant shares it with another order.
 - `shared_items` contains another participant's item when that item is shared with the authenticated participant's order.
+- `owned_by_me` distinguishes the two: `true` when the line sits in the viewer's own session and others bought into it, `false` when the viewer bought into someone else's line.
+- `shared_with` lists everyone splitting the line **except the viewer** — the participant who ordered it plus anyone else who bought in. Its `order_id` is `null` when the line has not been drafted into an order yet.
 - `status` is derived from the cart item timestamps: `Served`, `Ready`, `Preparing`, or `null`.
 - `estimated_delivery_time` is computed from the order creation time plus the vendor's `estimated_prep_time` setting.
 - `estimated_delivery_time` uses the vendor's saved date/time formats.

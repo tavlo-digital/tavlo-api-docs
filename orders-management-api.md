@@ -49,6 +49,11 @@ Dine-in orders are grouped from active `table_scan_sessions`, not the legacy `ta
 - All active scan sessions for the same restaurant table are returned as one table group.
 - The group exposes `tableId`, `sessionIds`, guest count, orders, totals, payment state, and kitchen summary.
 - The waiter close-table endpoint closes all active scan sessions for that table (`POST /api/vendor/{vendorId}/tables/{tableId}/close-session`).
+- Pickup and takeaway groups have no table, so staff close them by session
+  (`POST /api/vendor/{vendorId}/scan-sessions/{sessionId}/close`). It closes the whole PIN group and
+  applies the **same rules** as the table close — unserved items give `409 unfinished_items`, an
+  outstanding balance gives `409 unpaid_balance` unless `force` is passed — and emits the same
+  `session_expire` customer event. Both entry points share one rule body, so they cannot diverge.
 
 ### Batch Consolidation Window [Legacy]
 
@@ -336,7 +341,7 @@ The day boundary is the vendor's own timezone (`VendorDateTimeService::vendorNow
 
 Actor-specific visibility:
 
-- Vendor owners and waiters receive submitted off-premise orders immediately. Paid orders are confirmed; a cash-requested order remains a visible `draft` with `paymentPending: true` until cash is confirmed.
+- Vendor owners and waiters receive submitted off-premise orders immediately. Paid orders are confirmed; a cash-requested order remains a visible `draft` with `paymentPending: true` until cash is confirmed. `paymentPending` is what makes the draft visible, so an order under more than one payment keeps the flag until *every* live payment covering it is gone — releasing one abandoned card attempt must not take a standing cash request off the waiter's screen.
 - Kitchen never receives an unpaid draft.
 - Kitchen receives a paid future scheduled `pickup` with `kitchenReleasedAt: null` so it can be displayed in the separate **Pickups** tab. The client sorts that tab by `scheduledFor` day/time and treats unreleased rows as read-only.
 - The kitchen's normal **New/Ready** queues include an off-premise order only after `kitchenReleasedAt` is set. These cards display `Pickup at {pickupTime}`; after release their preparation behavior is identical to dine-in.
@@ -641,7 +646,13 @@ in their reserved sequence even if queue workers receive them out of order.
 
 Marks 1–50 selected ready items served in one database transaction, one order-sequenced command,
 and one customer/operational realtime update. This is the endpoint used by the waiter page's
-**Serve all ready** action. The frontend groups a table's items by order so unrelated orders can
+**Serve all ready** action.
+
+The customer realtime event is **`cart_item_updated`** — the same event a single item status
+change emits, and the one the customer app subscribes to — carrying `template: cart.items_served`,
+`cart_item_ids`, `served_count` and a `state_patch` with operation `order.items_served`. It was
+previously emitted as `cart_items_updated`, which no client listened for, so serving a whole table
+left every customer screen unchanged while serving one item worked. The frontend groups a table's items by order so unrelated orders can
 process concurrently while each order remains sequenced behind its earlier kitchen commands.
 
 **Request headers for a waiter:**
@@ -854,6 +865,7 @@ This legacy endpoint sets `status → closed` and records `closedAt` on the requ
   "tableNumber": null,
   "tableId": null,
   "tableScanSessionId": "18",
+  "pin": "7086",
   "course": null,
   "waiterConfirmed": false,
   "waiterConfirmedAt": null,
@@ -887,6 +899,7 @@ This legacy endpoint sets `status → closed` and records `closedAt` on the requ
       "status": "in_progress",
       "sharedBetween": 1,
       "sharedWithOrderIds": [],
+      "isSharedCopy": false,
       "preparingStartAt": "2026-08-10T19:12:00.000000Z",
       "readyAt": null,
       "servedAt": null,
@@ -894,6 +907,9 @@ This legacy endpoint sets `status → closed` and records `closedAt` on the requ
     }
   ],
   "amount": 18.50,
+  "total": 18.50,
+  "tip": 0.00,
+  "tipAmount": 0.00,
   "serviceFee": 1.50,
   "vatAmount": 2.00,
   "currency": "EUR",
@@ -941,6 +957,10 @@ This legacy endpoint sets `status → closed` and records `closedAt` on the requ
 - `scheduledFor` is the requested pickup time. `kitchenReleasedAt` is set when the order enters the kitchen preparation queue. `pickupTime` is `scheduledFor` for scheduled pickup, otherwise the order's estimated ASAP collection time.
 - `pickupStatus` is `pending`, `ready`, or `picked-up`. `pickedUpAt` is returned at both order and item level after collection.
 - `paymentMethod` remains the order-level payment category used by operational logic. Use `paymentMethodDetails` or `paymentMethodLabel` for the exact Stripe wallet, card brand, and safe masked card number.
+- `pin` is the party's PIN, taken from the order's scan session. Dine-in clients can also read it from the [Table Scan Session Group Object](#table-scan-session-group-object); off-premise orders have no session group object, so this is the only place it appears for them.
+- `amount`/`total` are the same figure and already contain `serviceFee`. `tip`/`tipAmount` sit *outside* it, so what the guest was charged is `total + tip`.
+- `serviceFee` is the fee stored on the order — the guest's own share of it. It is not the same as `totals.service_fee`, which is recomputed from the linked lines and therefore charges a shared plate at full price to every order splitting it. Use `serviceFee` for anything per-guest.
+- `items[].isSharedCopy` is `true` when the line belongs to another order and this order is only paying a share of it. Such a line still appears here, because the guest is billed for `lineTotal / sharedBetween` of it, but the same `cartItemId` will appear on every order sharing it — deduplicate before counting plates.
 
 ### Table Scan Session Group Object
 
@@ -1202,10 +1222,15 @@ the visible notification feed or unread count.
 
 ### 16.6 Pickup/Takeaway Realtime Sequence
 
-All operational deliveries use the same `.notification.created` subscription and include a full current order at `metadata.order` so kitchen/waiter clients can insert or update the card without a follow-up request.
+All operational deliveries use the same `.notification.created` subscription. Card-lifecycle
+deliveries include a full current order at `metadata.order`, while payment-state deliveries may
+instead carry `order_snapshots` plus `resources`; clients then refresh only the named resources.
+
+`metadata.order` carries the same `sessionGroupKey` as the orders list — the PIN party for pickup/takeaway, the table for dine-in — because staff render one card per party. A client that groups by this key must get it from both sources; an order pushed live without one opens a second card next to the party it belongs to.
 
 | Moment | Audience | Event | Delivery behavior |
 |---|---|---|---|
+| Off-premise cash requested | Vendor + waiter | `payment_updated` | Immediate normal notification with `sound: "payment"` and `resources` including `orders`; refreshing the list reveals the unpaid `draft`, its frozen item lines, and `paymentPending: true`. Kitchen is excluded. |
 | Off-premise payment confirmed | Vendor + waiter | `order_confirmed` | Immediate normal notification; waiter can see the paid collection order |
 | Future scheduled pickup paid | Kitchen | `order_scheduled` | Silent (`is_silent: true`, already read); inserts/updates the separate Pickups tab with `kitchenReleasedAt: null`, without toast or sound |
 | ASAP payment or scheduled pickup reaches T−20 | Kitchen | `order_confirmed` | Normal urgent notification with `sound: "new_order"`; `metadata.order.kitchenReleasedAt` is set and the card enters the normal queue |
