@@ -3468,7 +3468,7 @@ Returns a structured receipt for one completed payment in the same format as the
 **Rules:**
 
 - The payment must be completed (status `succeeded` or non-null `paid_at`) — otherwise 422.
-- On first access, an invoice number is atomically generated and persisted on the anchor order (shared with the single-order receipt of that order).
+- The invoice number is assigned when the payment is confirmed, and is shared with the single-order receipt of the anchor order. Orders paid before this was true are numbered on first access instead.
 
 **Response (200):**
 
@@ -3558,7 +3558,7 @@ Each entry in `orders[].items` uses the same item shape as the single-order rece
 
 **GET** `/api/customer/orders/{orderPublicId}/receipt`
 
-Returns a structured receipt payload for a paid order, including restaurant legal details, itemised order with VAT breakdown, tax groups, totals, payment confirmation, and legal notes. On first access, an invoice number is atomically generated and persisted on the order.
+Returns a structured receipt payload for a paid order, including restaurant legal details, itemised order with VAT breakdown, tax groups, totals, payment confirmation, and legal notes. The invoice number is assigned when the payment is confirmed, so this endpoint reads it rather than creating it.
 
 **Authentication:** required (Bearer token).
 
@@ -3691,6 +3691,23 @@ Returns a structured receipt payload for a paid order, including restaurant lega
             "tax_note": "All prices include statutory VAT. The service date corresponds to the invoice date.",
             "company_register_note": "Registration number: FN 123456 a",
             "rksv_required_check": true
+        },
+        "fiscal": {
+            "required": true,
+            "state": "signed",
+            "country": "AT",
+            "provider": "fiskaly",
+            "signed_at": "2026-06-05T17:43:11.000000Z",
+            "qr_code_data": "_R1-AT1_TAVLO-VID1234_1001_2026-06-05T19:43:11_28,00_0,00_0,00_0,00_0,00_...",
+            "signature": "MEUCIQD...",
+            "signature_counter": null,
+            "receipt_number": "42",
+            "register_serial_number": "TAVLO-VID1234",
+            "amounts_per_vat_rate": [
+                { "vat_rate": "REDUCED_1", "amount": "22.00" },
+                { "vat_rate": "STANDARD", "amount": "6.00" }
+            ],
+            "amounts_per_payment_type": [{ "payment_type": "CASH", "amount": "28.00" }]
         }
     },
     "meta": {
@@ -3710,7 +3727,7 @@ Returns a structured receipt payload for a paid order, including restaurant lega
 | `restaurant.address`                                                              | `vendors.address, city, country`                                               | Joined with comma                                      |
 | `restaurant.vat_id`                                                               | `vendors.vat_number`                                                           |                                                        |
 | `restaurant.company_register_number`                                              | `vendors.business_registration_number`                                         |                                                        |
-| `receipt.invoice_number`                                                          | Auto-generated from`vendor_settings.invoice_prefix` + `next_invoice_number`    | Persisted on`orders.invoice_number` after first access |
+| `receipt.invoice_number`                                                          | Generated from`vendor_settings.invoice_prefix` + `next_invoice_number`         | Persisted on`orders.invoice_number` at payment confirmation |
 | `receipt.locale`                                                                  | English + vendor country code                                                  | e.g.`en-AT`, `en-DE`                                   |
 | `receipt.table`                                                                   | From`table_scan_session` → `restaurant_tables.name` or `Table {number}`        | `null` if no table session                             |
 | `order.items[].name`                                                              | Live menu item name resolved from`menu_item_id`                                | Localized using`Accept-Language`                       |
@@ -3721,12 +3738,27 @@ Returns a structured receipt payload for a paid order, including restaurant lega
 | `payment.paid_at`                                                                 | `orders.payment_confirmed_at` or `order_payments.paid_at`                      |                                                        |
 | `legal.invoice_note`                                                              | Hardcoded per vendor country                                                   | AT: § 11 UStG, DE: § 14 UStG, GB: UK VAT               |
 | `legal.rksv_required_check`                                                       | `true` for Austrian vendors                                                    | Hardcoded                                              |
+| `fiscal`                                                                          | `fiscal_receipts` row for this order                                           | `null` where fiscalization does not apply              |
+
+**Fiscalization (`data.fiscal`):**
+
+Receipts for vendors in a fiscalized country (`FISKALY_COUNTRIES`, default `AT,DE`) are signed by fiskaly — SIGN AT for Austrian RKSV, SIGN DE for the German KassenSichV.
+
+- `null` for every other vendor, and whenever `FISKALY_ENABLED` is off. Clients that predate this field are unaffected.
+- `state` is one of:
+  - `signed` — the receipt carries a valid signature and `qr_code_data`. Render the QR code; it is a legal requirement on the printed or displayed receipt.
+  - `pending` — payment is confirmed and the receipt is queued for signing. Signature fields are `null`. Do **not** present the receipt as final.
+  - `failed` — signing did not succeed after its retries. Signature fields are `null`, and the receipt needs attention before it can be treated as issued.
+- The receipt is signed once, keyed on an id chosen by Tavlo, so a retry cannot produce a second signature for the same order.
+- `amounts_per_vat_rate` and `amounts_per_payment_type` are the breakdown exactly as it was sent for signature. They are stored, not recomputed, so they stay correct after a menu price or VAT rate changes.
+- Signing is asynchronous. A receipt fetched immediately after payment can legitimately be `pending`; poll or refresh rather than treating it as an error.
 
 **Invoice number generation:**
 
 - Format: `{invoice_prefix}-{zero-padded 7-digit number}` (e.g. `INV-0001001`).
-- Generated atomically on first receipt access — `vendor_settings.next_invoice_number` is incremented with a row lock.
-- Subsequent requests for the same order return the persisted `orders.invoice_number` without incrementing.
+- Assigned the moment `orders.payment_confirmed_at` is set, by any payment path (Stripe webhook and verify, vendor mark-paid, cash confirmation, stale-payment reconciliation). Numbering therefore follows payment order, and an order whose receipt nobody opens is still numbered.
+- `vendor_settings.next_invoice_number` is read and incremented inside a transaction under a row lock, so concurrent payments cannot take the same number. The settings row is created on demand for vendors who have never saved Settings.
+- Receipt requests return the persisted `orders.invoice_number` without incrementing. Orders paid before assignment moved to payment time are numbered on their first receipt access, as a fallback.
 - `receipt.date`, `receipt.time`, `payment.paid_at`, and `meta.generated_at` use the vendor's saved date/time formats.
 
 **Response (422) — order not paid:**
@@ -4021,6 +4053,9 @@ Requests a cash payment for every order payable by the authenticated customer in
 - Creates one `order_payments` row with `status: 'cash_requested'`, `payment_method: 'cash'`, and `notes` in metadata.
 - Updates each covered order: `payment_method = 'cash'`, `payment_pending = true`, and sets `tip_amount` on the payer's own order.
 - Sends a `payment_updated` notification to all customers at the table and to waiter/vendor staff.
+- After the payment transaction commits, the staff notification worker adds a singular `metadata.order` using the operational order format (`id`, `items`, `paymentMethod`, `paymentPending`, `paymentReceived`, and table/session identity). Customer `order_snapshots` and `state_patch` remain unchanged. The same staff enrichment applies to checkout holds/releases, intent creation/cancellation, and payment completion.
+- Payments covering multiple orders produce one staff event per affected order, each with a distinct `event_id`. Additional order events are silent, so staff receive one audible/feed alert. Retrying the notification job does not duplicate these events in notification storage.
+- Deployment: deploy the backend and restart its notification workers before deploying the vendor app. Older queued payloads containing `order_snapshots` are enriched by the updated worker. The vendor app refetches orders/tables when a payment event lacks a compatible staff snapshot or removes merged orders.
 - Returns the same `payment.cash_requested` state patch sent to table customers so the initiator can lock the affected orders without reloading history.
 
 **Response (200):**

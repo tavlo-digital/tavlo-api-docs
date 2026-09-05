@@ -1515,6 +1515,8 @@ If both dates are supplied, `dateTo` must be the same as or later than `dateFrom
 
 Returns the structured receipt for a paid order. `{orderId}` accepts the numeric order ID or public ID. A payment that covered several orders returns all covered orders in the receipt.
 
+`data.fiscal` carries the fiskaly signature for vendors in a fiscalized country (`FISKALY_COUNTRIES`, default `AT,DE`), and is `null` everywhere else. Its `state` is `signed`, `pending` or `failed` — a `pending` or `failed` receipt has `null` signature fields and must not be shown as a final document. See the customer API reference for the full field list; the block is identical on both surfaces.
+
 **Auth:** `Bearer {vendorToken}` or an authorized team member token
 
 **Request body:** none
