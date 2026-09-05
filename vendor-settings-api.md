@@ -30,7 +30,8 @@ Returns the full vendor settings object for a single vendor.
   "website": "https://myrestaurant.com",
   "country": "Austria",
   "city": "Vienna",
-  "address": "Hauptstraße 1, 1010 Wien",
+  "postalCode": "1010",
+  "address": "Hauptstraße 1",
   "phone": "+43 1 2345678",
   "email": "vendor@example.com",
   "status": "active",
@@ -126,6 +127,7 @@ Updates one or more vendor settings fields. Only supplied fields are updated (pa
   "restaurantName": "New Name",
   "website": "https://newsite.com",
   "city": "Graz",
+  "postalCode": "8010",
   "address": "Neue Straße 5",
   "phone": "+43 316 123456",
   "description": "Updated description",
@@ -341,7 +343,8 @@ Submits proposed changes to legally sensitive fields for admin review. If the ve
   "restaurantName": "My Restaurant",
   "country": "Austria",
   "city": "Vienna",
-  "address": "Hauptstraße 1, 1010 Wien",
+  "postalCode": "1010",
+  "address": "Hauptstraße 1",
   "vendorNotes": "Reason: Company renamed"
 }
 ```
@@ -355,6 +358,7 @@ Submits proposed changes to legally sensitive fields for admin review. If the ve
 | `restaurantName` | Yes, for first submission | Public-facing name |
 | `country` | Yes, for first submission | Country name |
 | `city` | Yes, for first submission | City |
+| `postalCode` | Yes, for first submission | Postal code used for the fiskaly managed Unit address |
 | `address` | Yes, for first submission | Street address |
 | `vendorNotes` | No | Notes for the admin reviewer |
 
@@ -405,7 +409,8 @@ Returns the most recent legal change request for this vendor.
     "companyType": "GmbH",
     "country": "AT",
     "city": "Vienna",
-    "address": "Hauptstraße 1, 1010 Wien"
+    "postalCode": "1010",
+    "address": "Hauptstraße 1"
   },
   "adminNotes": null,
   "vendorNotes": "Company renamed",
@@ -417,6 +422,158 @@ Returns the most recent legal change request for this vendor.
 Status values: `pending` | `approved` | `rejected`
 
 Returns `null` if no requests exist.
+
+---
+
+## 7a. Fiscalization — the Registrierkasse
+
+A restaurant in a fiscalized country (`FISKALY_COUNTRIES`, default `AT,DE`) must have a cash register registered before it can go live. **Registration details are part of the vendor's legal identity**: they are submitted and approved together with the rest of it, and adding or changing them always goes back to a Tavlo admin.
+
+- **Austria is the only country that asks the merchant for anything.** Its register is filed through the restaurant's own FinanzOnline account, so the vendor supplies a web-service user (TID, Benutzer-ID, PIN). Those three values can be sent either on `POST /vendor/{id}/legal-info` (Settings, alongside the legal fields) or on `POST /vendor/{id}/fiscal/connect` (activation step two). Both write to the same pending `vendor_request_changes` row. Controlled by `FISKALY_MERCHANT_CREDENTIAL_COUNTRIES`.
+- **Every other supported country registers automatically** when a Tavlo admin approves the legal details, so there is no second activation step and nothing is asked of the restaurant. Germany is the first of these.
+- **Countries not in `FISKALY_COUNTRIES`** register nothing and are unaffected.
+
+For specialized fiskaly products (`FISKALY_MANAGED_ORGANIZATION_COUNTRIES`, default `AT,DE`), `FISKALY_API_KEY` and `FISKALY_API_SECRET` are the TEST/LIVE credentials of Tavlo's **Group**, not of a restaurant. On first approval Tavlo uses the Management API to:
+
+1. Authenticate the Group key and obtain its Group ID.
+2. Create one managed organization (shown as a Unit in fiskaly HUB) for the restaurant, using the approved legal name, VAT number, address, postal code, city, and country.
+3. Create a scoped API key under that Unit and store the one-time secret encrypted on the restaurant's `fiscal_devices` row.
+4. Use only that Unit key for the restaurant's SIGN AT / SIGN DE resources and receipts.
+
+This isolation prevents one restaurant's SCU/TSS limits and resources from being shared by every Tavlo vendor. Unit discovery uses Tavlo vendor metadata, so retrying after a lost create response reuses the existing Unit instead of creating a duplicate.
+
+Adding a country fiskaly supports is configuration, not a change to this flow: a `services.fiskaly.providers` entry pointing at a `FiscalProvider` class, a base URL, and the country code in `FISKALY_COUNTRIES`. A country listed without a provider fails loudly — admin approval is held with a warning, and its vendors stay blocked from going live rather than silently taking unsigned orders. The manual provisioning command records a failed device for operational retry.
+
+### `GET /vendor/{vendorId}/fiscal/status`
+
+Drives the activation wizard — which steps apply and which are done.
+
+**Auth:** `Bearer {vendorToken}` or an authorized team member token
+
+#### Response `200 OK`
+```json
+{
+  "required": true,
+  "country": "AT",
+  "needsFinanzOnline": true,
+  "connected": false,
+  "submitted": false,
+  "awaitingApproval": false,
+  "needsMerchantAction": true,
+  "state": null,
+  "serialNumber": null,
+  "connectedAt": null,
+  "lastError": null,
+  "environment": "sandbox",
+  "legalInfoSubmitted": true,
+  "vatNumber": "ATU12345678",
+  "activationComplete": false
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `required` | This vendor's country needs a registered cash register. `false` for e.g. `GB`, and while `FISKALY_ENABLED` is off |
+| `needsFinanzOnline` | `true` for Austria only — the connect call then requires the three FON values |
+| `connected` | A device exists and is `initialized` — receipts are being signed |
+| `submitted` | The vendor has supplied their details |
+| `awaitingApproval` | Details are on a pending change, waiting on a Tavlo admin |
+| `needsMerchantAction` | The vendor still has something to supply — drives whether activation shows a second step |
+| `state` | `awaiting_approval` \| `pending` \| `registered` \| `initialized` \| `failed` \| `disabled`, or `null` |
+| `lastError` | Populated only while `state` is `failed` |
+| `legalInfoSubmitted` | Step one is done (approved on the vendor, or awaiting approval). A rejected submission is `false` so activation returns to the correction form |
+| `vatNumber` | Approved value, else the one from the pending legal change |
+| `activationComplete` | The vendor has done everything asked of them. Registration may still be waiting on an admin, which is not theirs to chase |
+
+### `POST /vendor/{vendorId}/fiscal/connect`
+
+Adds the FinanzOnline details to the vendor's pending legal change, opening one carrying their current legal values if none is in review. **Nothing is sent to the tax office here** — registration runs on admin approval, against details somebody has checked.
+
+Austria only. Germany and unfiscalized countries return `422`.
+
+Resubmitting before approval updates the same request rather than queuing a second one, so a vendor can correct a wrong PIN.
+
+**Auth:** `Bearer {vendorToken}` or an authorized team member token
+
+#### Request Body
+```json
+{
+  "fonParticipantId": "123456789",
+  "fonUserId": "tavlo12345",
+  "fonUserPin": "mypin1234"
+}
+```
+
+These are the credentials of the dedicated **Registrierkassen-Webservice-Benutzer** the restaurant creates in its own FinanzOnline account — never the general FinanzOnline login. The PIN is stored encrypted, never returned by any endpoint, and cleared from the approval history once it has been handed to the device.
+
+| Field | Rules |
+|---|---|
+| `fonParticipantId` | Required (AT). Teilnehmer-Identifikation, max 100 chars |
+| `fonUserId` | Required (AT). 8–12 letters and digits, at least one of each |
+| `fonUserPin` | Required (AT). Min 8 chars. FinanzOnline shows it only once, at creation |
+
+#### Response `200 OK`
+```json
+{
+  "submitted": true,
+  "connected": false,
+  "awaitingApproval": true,
+  "state": "awaiting_approval",
+  "country": "AT",
+  "serialNumber": null,
+  "connectedAt": null,
+  "changeRequestId": 12,
+  "message": "Your details are with our team for review. We will register your cash register once they are approved."
+}
+```
+
+On approval, the final registration step issues the RKSV **start receipt** (Startbeleg) automatically.
+
+#### Response `422`
+```json
+{ "message": "Add your legal and tax details before connecting a cash register.", "code": "LEGAL_INFO_REQUIRED" }
+```
+
+| `code` | Cause |
+|---|---|
+| `LEGAL_INFO_REQUIRED` | Legal details have not been submitted |
+| `VAT_NUMBER_REQUIRED` | No VAT number on the vendor or the pending legal change |
+| `NO_CREDENTIALS_REQUIRED` | This country asks nothing of the merchant (Germany), or is not fiscalized |
+
+Validation errors on the FON fields return the standard `errors` object.
+
+### `POST /vendor/{vendorId}/fiscal/send-instructions`
+
+Emails the FinanzOnline web-service-user steps to the restaurant's accountant.
+
+#### Request Body
+```json
+{ "email": "accountant@example.com", "name": "Frau Huber", "locale": "de" }
+```
+
+`name` is optional. `locale` is `en` (default) or `de`.
+
+#### Response `200 OK`
+```json
+{ "message": "Instructions sent to accountant@example.com." }
+```
+
+### Going live requires a registered cash register
+
+`PUT /vendor/{vendorId}/settings` with `isLiveAndDiscoverable: true` is rejected with `422` and `code: CASH_REGISTER_REQUIRED` unless the vendor's device is `initialized`. The gate also protects existing or operationally provisioned vendors whose device is not ready; without it a restaurant could take orders whose receipts never get signed. Vendors outside `FISKALY_COUNTRIES` are unaffected.
+
+### Admin: approval triggers registration
+
+Approving a vendor's legal change (`POST /admin/vendor/{vendor}/changes/{change}/approve`) writes the approved fields onto the vendor and then registers their cash register, if one has been submitted and is not registered yet.
+
+- Approval and registration are all-or-nothing. If fiskaly rejects vendor-supplied data, none of the legal details are approved; the change becomes `rejected`, its actionable reason is stored in `admin_notes`, and the vendor must correct and resubmit it.
+- A Tavlo configuration error or transient provider failure also approves nothing, but leaves the change `pending` so the admin can try approval again after the problem is resolved.
+- The managed Unit id, scoped credential, SCU/TSS id, and register/client id are prepared before the approval transaction. If a later registration call fails, those identifiers remain available so a correction or retry resumes the same resources instead of creating duplicates. Legal details themselves remain unapproved.
+- `POST /admin/vendor/{vendor}/fiscal/retry` is an operational recovery route for a failed device stranded by manual provisioning. Rejected approval requests are corrected and resubmitted instead.
+- Approving a later legal-only change for an already-registered vendor does not re-register it. Changing its fiscal details sends the combined request through approval and registration again.
+- Vendors outside `FISKALY_COUNTRIES` register nothing; no provider call is made.
+- Austria waits until the vendor has supplied FinanzOnline credentials; approving before that registers nothing and fails nothing. Germany registers on approval alone.
+- The FinanzOnline PIN appears in the admin diff as `•••••••• (supplied)`, never in full.
 
 ---
 
