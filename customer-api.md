@@ -1657,7 +1657,7 @@ Returns the public "About" profile for a restaurant — vanity stats, features, 
 
 **GET** `/api/customer/restaurants/{vendorPublicId}/languages`
 
-Returns the fixed English fallback, customer-facing languages, date format, and time format enabled by the vendor in settings.
+Returns the restaurant's own language, the customer-facing languages it offers, and the date and time formats set in its settings.
 
 **Authentication:** public route; no Bearer token required.
 
@@ -1665,16 +1665,18 @@ Returns the fixed English fallback, customer-facing languages, date format, and 
 
 **Response (200):**
 
+An Austrian restaurant, whose approved legal details put it in `AT`:
+
 ```json
 {
     "vendor": { "id": "VID-8492", "name": "Bella Italia" },
-    "default_language": "en",
+    "default_language": "de",
     "available_languages": ["en", "de", "it"],
     "date_format": "DD.MM.YYYY",
     "time_format": "24h",
     "languages": [
-        { "code": "en", "name": "English", "is_default": true },
-        { "code": "de", "name": "Deutsch (German)", "is_default": false },
+        { "code": "en", "name": "English", "is_default": false },
+        { "code": "de", "name": "Deutsch (German)", "is_default": true },
         { "code": "it", "name": "Italiano (Italian)", "is_default": false }
     ]
 }
@@ -1682,12 +1684,14 @@ Returns the fixed English fallback, customer-facing languages, date format, and 
 
 **Notes:**
 
-- `default_language` is always `en`; it is no longer stored per vendor.
-- `available_languages` comes from `vendor_settings.supported_languages`.
+- `default_language` is **the restaurant's own language**, taken from `countries.default_language` for the country on their approved legal and tax details. `AT` and `DE` are seeded as `de`, `GB` as `en`; an admin can change the mapping per country.
+- It falls back to `en` when the vendor has no country, the country is unknown, or the mapped language is not an active language.
+- **Receipts are always written in `default_language`**, never in the diner's `Accept-Language`. A restaurant's legal document must not change wording depending on who opens it, and the customer and vendor copies of the same receipt are therefore identical. Everything else — the menu, cart, order detail and tracking — still follows `Accept-Language`.
+- `available_languages` comes from `vendor_settings.supported_languages`, with `en` and the restaurant's `default_language` always included, because receipts are written in the latter.
 - `date_format` comes from `vendor_settings.date_format`.
 - `time_format` comes from `vendor_settings.time_format`.
 - Vendor-linked date/time fields in customer responses are already formatted using these values.
-- English is always included first.
+- English is always listed first, whether or not it is the default.
 - Supported codes are `en`, `de`, `it`, `fr`, `ar`, `tr`, `zh`, `ja`, `sr`, `cs`, `es`, and `nl`.
 
 ### Customer Locale Resolution
