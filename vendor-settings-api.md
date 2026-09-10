@@ -401,6 +401,7 @@ Returns the most recent legal change request for this vendor.
 {
   "id": 1,
   "status": "pending",
+  "hasApprovedLegal": false,
   "legalInfo": {
     "restaurantName": "My Restaurant",
     "legalEntityName": "My GmbH",
@@ -410,7 +411,9 @@ Returns the most recent legal change request for this vendor.
     "country": "AT",
     "city": "Vienna",
     "postalCode": "1010",
-    "address": "Hauptstraße 1"
+    "address": "Hauptstraße 1",
+    "fonParticipantId": "ATU1234567",
+    "fonUserId": "tavlo01ws"
   },
   "adminNotes": null,
   "vendorNotes": "Company renamed",
@@ -421,7 +424,18 @@ Returns the most recent legal change request for this vendor.
 
 Status values: `pending` | `approved` | `rejected`
 
-Returns `null` if no requests exist.
+`hasApprovedLegal` says whether this vendor has *ever* had a change approved,
+which `status` alone cannot tell you. A `pending` change with
+`hasApprovedLegal: false` is a restaurant still waiting on its first approval
+and unable to trade; with `hasApprovedLegal: true` it is an established
+restaurant whose edit is under review.
+
+`legalInfo.fonParticipantId` and `legalInfo.fonUserId` are the FinanzOnline
+web-service credentials submitted with the change (Austria only, `null`
+elsewhere). The PIN is never returned.
+
+Returns `null` if no requests exist — which also implies no approved legal
+information.
 
 ---
 
@@ -464,6 +478,7 @@ Drives the activation wizard — which steps apply and which are done.
   "serialNumber": null,
   "connectedAt": null,
   "lastError": null,
+  "lastErrors": [],
   "environment": "sandbox",
   "legalInfoSubmitted": true,
   "vatNumber": "ATU12345678",
@@ -480,7 +495,8 @@ Drives the activation wizard — which steps apply and which are done.
 | `awaitingApproval` | Details are on a pending change, waiting on a Tavlo admin |
 | `needsMerchantAction` | The vendor still has something to supply — drives whether activation shows a second step |
 | `state` | `awaiting_approval` \| `pending` \| `registered` \| `initialized` \| `failed` \| `disabled`, or `null` |
-| `lastError` | Populated only while `state` is `failed` |
+| `lastError` | Populated only while `state` is `failed`. Plain English, one reason per line |
+| `lastErrors` | The same reasons already split into a list, ready to render one per row. Empty unless `state` is `failed`. Never contains fiskaly's error codes or JSON paths — those stay on the admin surface |
 | `legalInfoSubmitted` | Step one is done (approved on the vendor, or awaiting approval). A rejected submission is `false` so activation returns to the correction form |
 | `vatNumber` | Approved value, else the one from the pending legal change |
 | `activationComplete` | The vendor has done everything asked of them. Registration may still be waiting on an admin, which is not theirs to chase |
