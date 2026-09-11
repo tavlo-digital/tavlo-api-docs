@@ -816,6 +816,14 @@ Changes the authenticated vendor owner or staff user's password. Staff users, in
 }
 ```
 
+### Session Effect
+Every other access token belonging to that user is revoked, so the old
+password stops working on any device it was still signed in on. The token used
+to make this call survives — the caller stays signed in where they are. Other
+devices get `401` on their next request and are signed out by the client.
+
+A failed change (wrong `current_password`) revokes nothing.
+
 ### Validation Errors
 - `422` — current password is incorrect, new password is shorter than 8 characters, or confirmation does not match.
 - `401` — missing or invalid Bearer token.

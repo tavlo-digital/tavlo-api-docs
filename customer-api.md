@@ -473,6 +473,12 @@ Creates a new customer or links a social account to an existing email. The `acce
 
 The `access_token` is verified server-side against the provider's API.
 
+Signing in issues an additional token and leaves existing ones alone, so an
+account can be signed in on several devices at once. (This endpoint and
+`social/register` previously revoked every existing token, which signed the
+account's other devices out.) To end other sessions deliberately, use
+`logout-all` or change the password.
+
 **Body:**
 
 ```json
@@ -929,6 +935,14 @@ Use `multipart/form-data` when uploading a new profile image. Send the file usin
     "message": "Password changed successfully."
 }
 ```
+
+**Session effect:** every other access token for the account is revoked — the
+old password stops working everywhere it was still signed in. The token used
+to make this call stays valid, so the caller is not signed out of the device
+they changed the password on. Other devices receive `401` on their next
+request and their clients sign out.
+
+A failed change (wrong `current_password`) revokes nothing.
 
 ---
 
