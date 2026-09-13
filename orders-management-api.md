@@ -36,6 +36,7 @@ Authenticated endpoints require a token obtained via `POST /api/vendor/login`. V
 19. [Place Staff Order](#19-place-staff-order)
 20. [Order History (Paginated)](#20-order-history-paginated)
 21. [Order Receipt](#21-order-receipt)
+22. [Refunds](#22-refunds)
 
 ---
 
@@ -792,6 +793,11 @@ Cancels an order. Sets `status → cancelled`, records `cancelledAt`, and option
 
 **Response `200`:** Returns the updated [Order Object](#order-object) with `status: "cancelled"`.
 
+**Response `409`:** Returned if `paymentReceived` is already `true`. A paid order cannot be cancelled directly: cancelling does not move any money, so it would silently write off what the customer already paid. Refund it first via [Refunds](#22-refunds), then cancel.
+```json
+{ "message": "This order has already been paid and cannot be cancelled directly. Refund the payment first." }
+```
+
 ---
 
 ## 12. Release Batch to Kitchen [Legacy]
@@ -1292,6 +1298,8 @@ PUSHER_APP_CLUSTER=...
 | `PATCH` | `/api/vendor/orders/{orderId}/picked-up` | Mark a ready, paid pickup/takeaway collected; waiter TeamMember uses an async command |
 | `PATCH` | `/api/vendor/orders/{orderId}/served` | Mark served; waiter TeamMember uses an async command |
 | `PATCH` | `/api/vendor/orders/{orderId}/cancel` | Cancel order |
+| `GET` | `/api/vendor/orders/{orderId}/refund/items` | List an order's still-refundable paid lines (owner only) |
+| `POST` | `/api/vendor/orders/{orderId}/refund` | Refund the selected lines (owner only) |
 | `POST` | `/api/vendor/{vendorId}/sessions/{sessionId}/release` | [Legacy] Release batch to kitchen now |
 | `POST` | `/api/vendor/{vendorId}/sessions/{sessionId}/fire-course` | [Legacy] Advance to next course |
 | `POST` | `/api/vendor/{vendorId}/sessions/{sessionId}/close` | [Legacy] Close legacy table session |
@@ -1550,3 +1558,191 @@ The payment block reports the exact Stripe method and only safe card data:
 For cash, `provider`, `method`, and `method_details.method` are `cash`, while card and wallet fields are null. Other Stripe methods use Stripe's method type and a human-readable `display_name`.
 
 **Errors:** `404` for an unknown/vendor-mismatched order; `422` when the order is not paid.
+
+---
+
+## 22. Refunds
+
+Vendor-initiated, item-level refunds on an already-paid order.
+
+Tavlo has **no customer-facing refund flow**: a diner asks a waiter, and only the **vendor owner's own login** can execute the refund. Staff (`TeamMember`) tokens are rejected by the controller itself, and these route names are deliberately absent from `EnsureStaffCanAccessVendorRoute`'s allowlists — so a later edit to that allowlist cannot silently open refunds up to waiters.
+
+Refund amounts are never recomputed from live cart state. When an order's payment is confirmed, each of its lines is frozen into an `order_items` row carrying that order's own share of the item, its VAT rate and its tax category. Refunds read only from that snapshot, so a shared item's split cannot drift after the fact when someone else joins or leaves the share.
+
+### `GET /api/vendor/orders/{orderId}/refund/items`
+
+The lines of a paid order that still have money left to refund.
+
+- **Auth:** Bearer token — **vendor owner only** (`403` for any team member)
+- **`{orderId}`:** accepts either the numeric id or the `order_public_id`
+
+**Response `200`:**
+```json
+{
+  "orderId": "184",
+  "orderPublicId": "ord-9fJ2kL",
+  "paymentMethod": "card",
+  "currency": "EUR",
+  "totalPaid": 42.50,
+  "totalRefunded": 8.00,
+  "fiscalBlocked": false,
+  "items": [
+    {
+      "id": 991,
+      "name": "Wiener Schnitzel",
+      "quantity": 1,
+      "shareCount": 2,
+      "sharedWithOthers": true,
+      "amount": 11.25,
+      "refundedAmount": 0,
+      "refundableAmount": 11.25
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `fiscalBlocked` | `boolean` | `true` when the vendor's country requires fiscalization (AT/DE). Refunds are rejected while this is `true` — see the `409` below. |
+| `shareCount` | `integer` | How many orders share this physical item. `1` means it is not split. |
+| `amount` | `number` | What **this order** paid for the line — already this guest's exact-cent share of a split item, not the item's full price. |
+| `refundableAmount` | `number` | `amount - refundedAmount`, floored at `0`. |
+
+Items with nothing left to refund are omitted from the list.
+
+**Errors:** `403` staff token; `404` unknown or vendor-mismatched order; `409` the order has not been paid.
+
+---
+
+### `POST /api/vendor/orders/{orderId}/refund`
+
+Refunds the selected lines.
+
+- **Auth:** Bearer token — **vendor owner only** (`403` for any team member)
+
+**Request Body:**
+```json
+{
+  "order_item_ids": [991, 992],
+  "reason": "Steak was cold"
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `order_item_ids` | `int[]` | Required, min 1. `id`s from the endpoint above — **not** cart item ids. |
+| `reason` | `string\|null` | Optional, max 500 chars. Defaults to `"Vendor-initiated item refund"`. |
+
+Each selected line is refunded for its **full remaining** `refundableAmount`; there is no partial-amount-per-line input.
+
+**Response `201`:**
+```json
+{
+  "refund": {
+    "id": 57,
+    "publicId": "rfd-a81kQ2mZx0Lt",
+    "amount": 11.25,
+    "currency": "EUR",
+    "paymentMethod": "card",
+    "providerRefundId": "re_3Nxxx",
+    "reason": "Steak was cold",
+    "resolvedAt": "2026-09-12T18:41:07+00:00",
+    "items": [
+      { "orderItemId": 991, "name": "Wiener Schnitzel", "amount": 11.25 }
+    ]
+  },
+  "order": { "id": "184", "totalPaid": 42.50, "totalRefunded": 19.25 }
+}
+```
+
+**Behaviour by payment method**
+
+| `paymentMethod` | What happens |
+|---|---|
+| `card` | Refunded through Stripe against the payment intent that covered this order — including a shared payment where one guest paid for several orders. `providerRefundId` is the Stripe refund id. |
+| `cash` | Recorded in the ledger only; the vendor hands the cash back at the till. `providerRefundId` is `null`. |
+| anything else | `422` — not supported. |
+
+**Idempotency:** the Stripe call uses a deterministic key derived from the order id, the amount and the sorted item ids. A double-click, or a request that timed out but actually succeeded, lands on the **same** Stripe refund rather than creating a second one. The database write is wrapped in a transaction that locks the order and the selected lines, so two concurrent refunds cannot both claim the same line.
+
+**Notification:** the paying customer is notified via the `payment_updated` event (template `payment.refunded`). A failure to notify is logged and never fails the refund — the money has already moved by then.
+
+**Error Responses**
+
+| Status | Message | Cause |
+|---|---|---|
+| `403` | `Only the account owner can process a refund.` | A staff (`TeamMember`) token was used. |
+| `404` | — | Unknown order, or it belongs to another vendor. |
+| `409` | `Refunds are not available yet for this vendor — ...` | The vendor is in a fiscalization country (AT/DE). A signed fiscal cancellation receipt is required there and Tavlo does not issue one yet. |
+| `409` | `This order has not been paid yet.` | `paymentConfirmedAt` is null. |
+| `409` | `No completed card payment was found for this order.` | The order says `card` but no succeeded payment intent covers it. |
+| `422` | `One or more selected items do not belong to this order.` | An id in `order_item_ids` is not on this order. |
+| `422` | `These items have already been fully refunded.` | Nothing left to refund on the selection. |
+| `422` | `Refunds aren't supported for payment method "...".` | Neither `card` nor `cash`. |
+
+---
+
+### Refunds on receipts
+
+Every receipt endpoint — vendor (`GET /api/vendor/{vendorId}/orders/{orderId}/receipt`) and customer (`GET /api/customer/orders/{orderPublicId}/receipt`, `GET /api/customer/receipts/{receiptId}`) — now carries a `refunds` array, and `totals` gains two keys **only when something was refunded**:
+
+```json
+{
+  "totals": {
+    "grand_total": 42.50,
+    "total_refunded": 11.25,
+    "net_total_after_refunds": 31.25
+  },
+  "refunds": [
+    {
+      "id": 57,
+      "reference": "rfd-a81kQ2mZx0Lt",
+      "invoice_number": "AT-2026-000184",
+      "amount": 11.25,
+      "net_amount": 10.23,
+      "vat_amount": 1.02,
+      "currency": "EUR",
+      "payment_method": "card",
+      "reason": "Steak was cold",
+      "resolved_at": "12.09.2026 18:41",
+      "tax_groups": [
+        {
+          "code": "A",
+          "label": "Food",
+          "tax_category": "food",
+          "vat_rate": 10,
+          "net_amount": 10.23,
+          "vat_amount": 1.02,
+          "gross_amount": 11.25
+        }
+      ],
+      "items": [{ "name": "Wiener Schnitzel", "amount": 11.25 }]
+    }
+  ]
+}
+```
+
+A refund is presented as its **own credit note referencing the original invoice**, never as an edit of it: Austrian and German VAT law treats an issued invoice as immutable, and RKSV requires a cancellation to be its own negative transaction. Each entry therefore carries its own `reference` (the refund's public id) and its own VAT breakdown, computed at the rate that applied **when the item was sold** — frozen on the snapshot — not whatever rate is configured today.
+
+`net_total_after_refunds` is deliberately not named `net_total`: that key already means the pre-VAT subtotal in the tax breakdown and must not change meaning just because a refund happened.
+
+### Refund state on order and receipt lists
+
+`GET /api/vendor/{vendorId}/orders`, `GET /api/vendor/{vendorId}/orders/history` and the customer receipt list add:
+
+| Field | Type | Description |
+|---|---|---|
+| `refundedAmount` / `refunded_amount` | `number` | Real money refunded from **this** order. |
+| `refundStatus` / `refund_status` | `string` | `none` \| `partial` \| `full`. |
+
+Order items additionally carry their own `refundStatus`. Note one deliberate asymmetry: an order is reported `partial` when a **sibling order sharing one of its items** had that item refunded, even though this order's own money never moved. A shared item is one physical thing — whichever guest sent it back, both sides of the split should show that something happened to it. `refundedAmount` stays `0` in that case, because no money left this order.
+
+### Backfill
+
+`order_items.vat_rate` / `tax_category` were added in a later migration than the snapshot itself, so any order paid in between carries the column default (0%, no category) and would produce a bogus credit note. Run once after deploy:
+
+```
+php artisan refunds:backfill-tax-snapshot
+```
+
+It is idempotent and safe to re-run.
