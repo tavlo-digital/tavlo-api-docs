@@ -760,6 +760,28 @@ Authorization: Bearer {token}
 
 **Response `200`:** Same shape as GET single item with updated `available` field.
 
+Toggling by hand also takes ownership of the item's availability: it clears the automatic marker described below, so a later delivery will not reverse the decision.
+
+---
+
+### Automatic availability from ingredient stock
+
+Menu items are taken off the menu on their own when the stock behind them runs out, and put back when it is replenished. This is driven by the vendor's Availability Rules in `PUT /{vendorId}/inventory/settings`:
+
+| Setting | Default | Effect |
+|---|---|---|
+| `availability.autoMarkUnavailableWhenCriticalOut` | `true` | Any **critical** recipe ingredient at zero marks the item unavailable |
+| `availability.autoMarkUnavailableWhenAllOut` | `false` | Marks it unavailable only when **every** tracked ingredient is at zero |
+
+Re-evaluated whenever stock moves: order deduction, stock adjustment, item quantity edit, bulk import, and purchase-order receipt.
+
+Rules and caveats:
+
+- Only ingredients with `track_stock = true` count. An item whose recipe has no tracked ingredients is never touched.
+- Both rules off, or `general.enableInventoryTracking` off, disables the behaviour entirely.
+- **Only automatic changes are reversed.** `menu_items.auto_unavailable_at` records that the system made the change; an item switched off by a person has no marker and stays off through any number of deliveries.
+- Each automatic flip writes a `menu_item.availability_auto_toggled` VendorActivity with `metadata.automatic = true`, distinguishing it from the manual `menu_item.availability_toggled` event.
+
 ---
 
 ## 4. Modifier Groups

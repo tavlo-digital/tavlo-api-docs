@@ -162,6 +162,7 @@ Ingredient names, supplier names, and category names are localized to the vendor
   "costPerUnit": 2,
   "supplier": "Fresh Foods",
   "trackStock": true,
+  "expiryDate": "2026-09-30",
   "translations": {
     "en": { "name": "Tomatoes", "supplier": "Fresh Foods" },
     "de": { "name": "Tomaten", "supplier": "Frische Lebensmittel" }
@@ -171,7 +172,9 @@ Ingredient names, supplier names, and category names are localized to the vendor
 
 Returns the created item with status `201`. Quantity, unit, costs, nutrition, and stock rules are shared. Ingredient and supplier names are translated.
 
-`supplier` is optional. When the initial quantity is greater than zero, the API also creates an `Initial Stock` activity entry.
+`supplier` is optional. When the initial quantity is greater than zero, the API also creates an `Initial Stock` activity entry and an opening lot.
+
+`expiryDate` is optional and applies to that opening stock. See [Lots and Expiry](#lots-and-expiry).
 
 ### Bulk Import Items
 
@@ -242,7 +245,9 @@ The dashboard's downloadable CSV template contains the required column headers o
 
 All fields are optional. Translation updates are partial.
 
-When `quantity` changes, the API records a `Manual Update` stock activity entry. Use the dedicated adjustment endpoint below when the reason and adjustment type are known.
+When `quantity` changes, the API records a `Manual Update` stock activity entry and reconciles the item's lots to the new total: the difference is added as a correction lot or drawn oldest-first. Use the dedicated adjustment endpoint below when the reason and adjustment type are known.
+
+`expiryDate` applies the given date to stock still on hand that has no date recorded — for entering an expiry after the fact. It does not alter lots that already carry a date. See [Lots and Expiry](#lots-and-expiry).
 
 ### Get Item Details
 
@@ -299,8 +304,11 @@ Atomically changes the quantity and records the adjustment in the stock activity
 | `amount` | number | yes | Signed, non-zero change. Deliveries must be positive and waste must be negative. |
 | `type` | string | yes | `delivery`, `waste`, or `correction` |
 | `reason` | string/null | no | Maximum 500 characters |
+| `expiryDate` | date/null | no | Deliveries only. The expiry of this arrival, recorded on the lot it creates. |
 
 The response contains the updated inventory `item` and the new `activity` entry. An adjustment that would make stock negative returns `422` and does not change the item.
+
+Stock arriving creates a lot (see [Lots and Expiry](#lots-and-expiry)); stock leaving is drawn from the soonest-expiring lot first.
 
 Bulk imports also record `Excel Import` activity whenever an imported row changes an item quantity.
 
@@ -351,6 +359,64 @@ The order is persisted before dispatch. Dispatch behavior is based on the suppli
 - `Email`: sends a purchase-order email to the configured ordering email.
 - `API`: posts the purchase-order payload to the configured ordering URL.
 - `Phone`: persists the order for manual phone placement; no external request is attempted.
+
+### Receive a Purchase Order
+
+**POST** `/{vendorId}/inventory/purchase-orders/{purchaseOrderId}/receive`
+
+Auth: vendor (`auth:vendor`). `purchaseOrderId` accepts the `purchaseOrderPublicId` or the numeric id.
+
+Books a dispatched order into stock. This is where a delivery gets its expiry date: the arrival becomes its own lot, so it expires on its own schedule rather than inheriting whatever is already on the shelf.
+
+```json
+{
+  "quantity": 6,
+  "expiryDate": "2026-09-30",
+  "note": "Two crates short"
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `quantity` | number | no | Greater than zero. Defaults to the ordered quantity; pass it when a short or over delivery arrives. |
+| `expiryDate` | date/null | no | Expiry of this arrival. Omitted means the lot is undated: used last, never counted as expiry risk. |
+| `note` | string/null | no | Maximum 500 characters |
+
+```json
+{
+  "purchaseOrder": {
+    "purchaseOrderPublicId": "po-a1b2c3",
+    "status": "received",
+    "quantity": 10,
+    "receivedQuantity": 6,
+    "receivedExpiryDate": "2026-09-30",
+    "receivedAt": "2026-09-15T08:12:44.000000Z"
+  },
+  "item": { "id": 12, "name": "Tomatoes", "quantity": 8 },
+  "activity": {
+    "type": "delivery",
+    "source": "Purchase Order po-a1b2c3",
+    "quantityBefore": 2,
+    "quantityAfter": 8
+  }
+}
+```
+
+The item quantity is increased, a lot is created against the purchase order, and a `delivery` stock movement is recorded — all in one transaction.
+
+Receiving the same order twice returns `422` and credits nothing; so does receiving an order whose inventory item has since been deleted. A purchase order belonging to another vendor returns `403`.
+
+## Lots and Expiry
+
+Each delivery of an ingredient is stored as its own **lot**: the quantity that arrived, what is left of it, the cost it came in at, and its expiry date. `inventory_items.quantity` remains the authoritative total; lots record what that total is made of.
+
+- **Draw order is FIFO by expiry.** Stock leaving — an order deduction, waste, a negative correction — is taken from the soonest-expiring lot first. Lots with no recorded date are drawn last.
+- **Undated lots are never guessed at.** An ingredient whose lots carry no expiry contributes nothing to expiry risk and is counted in `expiryRisk.untrackedItemCount` in the analytics payload instead.
+- **Expiry risk is measured, not estimated.** Analytics projects the item's measured consumption pace against each lot's real date. Stock already past its date is reported separately as `expiryRisk.expiredValue`.
+
+Expiry dates are accepted wherever stock arrives: `expiryDate` on item create, on the bulk import rows, on a `delivery` adjustment, and on purchase-order receipt. On item update, `expiryDate` applies to stock still on hand that has no date recorded.
+
+Stock that existed before lot tracking was deployed was migrated into one undated `Opening balance` lot per item, so lot totals match item quantities from the first request.
 
 Response `201`:
 
@@ -413,3 +479,16 @@ Translations use a language-keyed object:
 ```
 
 Enabled language tabs come from vendor settings. Missing ingredient or supplier translations fall back to the stored base value.
+
+## Availability Rules
+
+Stored under `settings['availability']` via `PUT /{vendorId}/inventory/settings`, these decide when a menu item is taken off the menu because the stock behind it ran out.
+
+| Field | Type | Default | Effect |
+|---|---|---|---|
+| `autoMarkUnavailableWhenCriticalOut` | boolean | `true` | Any **critical** recipe ingredient at zero marks the item unavailable |
+| `autoMarkUnavailableWhenAllOut` | boolean | `false` | Marks it unavailable only when **every** tracked ingredient is at zero |
+
+Applied whenever stock moves in either direction — order deduction, stock adjustment, item quantity edit, bulk import, purchase-order receipt — so an item goes off the menu when it sells out and comes back when it is restocked.
+
+Only ingredients with `track_stock = true` are considered, and the rules are skipped entirely when `general.enableInventoryTracking` is off. Items switched off by a person are never switched back on automatically; see [Automatic availability from ingredient stock](menu-management-api.md#automatic-availability-from-ingredient-stock) for the full behaviour.

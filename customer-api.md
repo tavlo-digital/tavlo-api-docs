@@ -2912,6 +2912,16 @@ This is the **canonical "table view" response**. Order draft and confirmation fl
 
 **Scope rule:** the customer must have an `active` row in `table_scan_sessions`. For dine-in, `people[]` includes every active session at the same restaurant table. For pickup/takeaway, it includes active sessions with the same vendor, mode, and PIN.
 
+**Cancelled orders.** An order the restaurant cancelled is **still listed**, carrying `status: "cancelled"`, `cancelled_at` and `cancelled_reason`, so the guest can see what happened to it rather than watching it disappear. It is excluded from every figure representing what is owed or in progress:
+
+- `people[].totals` (including `grand_total` and `total_tips`)
+- `people[].orders_count`
+- `summary.orders_count` and `summary.total_amount`
+
+Its own `amount` and `service_fee` are still reported on its order object, so a client can show what the cancelled order would have cost. Clients must key off `status`/`cancelled_at` when rendering — an order's `items[]` keep whatever item status they last held (typically `received`), which would otherwise read as still coming.
+
+**Realtime: `metadata.staff_action`.** Notifications raised by the restaurant — order cancelled, ready, served, picked up, cash payment confirmed, item status changed — carry `staff_action: true`. They name no `customer_id`, because no guest performed them. Clients that decide whether to announce an event by attributing it to another guest must also treat `staff_action` as announceable, or these messages update local state silently and the guest is never told.
+
 **Response (200):**
 
 ```json
